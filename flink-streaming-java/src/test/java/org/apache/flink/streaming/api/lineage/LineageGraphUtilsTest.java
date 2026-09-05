@@ -28,15 +28,19 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.sink.legacy.SinkFunction;
 import org.apache.flink.streaming.api.functions.sink.v2.DiscardingSink;
 import org.apache.flink.streaming.api.functions.source.legacy.SourceFunction;
+import org.apache.flink.streaming.api.transformations.GlobalCommitterTransform;
+import org.apache.flink.streaming.api.transformations.TransformationWithLineage;
 
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Testing for lineage graph util. */
 class LineageGraphUtilsTest {
@@ -182,6 +186,252 @@ class LineageGraphUtilsTest {
         assertThat(lineageGraph.sources().size()).isEqualTo(0);
         assertThat(lineageGraph.sinks().size()).isEqualTo(1);
         assertThat(lineageGraph.relations()).isEmpty();
+    }
+
+    @Test
+    void testExtractColumnLineageFromSinkTransformation() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSource<Long> source =
+                env.fromSource(new LineageSource(1L, 5L), WatermarkStrategy.noWatermarks(), "");
+        DataStreamSink<Long> sink = source.sinkTo(new LineageSink());
+
+        LineageDataset sourceDataset =
+                new DefaultLineageDataset(
+                        SOURCE_DATASET_NAME, SOURCE_DATASET_NAMESPACE, new HashMap<>());
+        LineageDataset sinkDataset =
+                new DefaultLineageDataset(
+                        SINK_DATASET_NAME, SINK_DATASET_NAMESPACE, new HashMap<>());
+        ColumnLineageRelation relation =
+                new DefaultColumnLineageRelation(
+                        sinkDataset,
+                        "result",
+                        Arrays.asList(
+                                new DefaultColumnLineageInput(
+                                        sourceDataset,
+                                        "value",
+                                        ColumnLineageDependencyType.DIRECT)),
+                        ColumnLineageOrigin.INPUT_FIELDS,
+                        "EXPRESSION");
+        TransformationWithLineage<?> sinkTransformation =
+                (TransformationWithLineage<?>) sink.getTransformation();
+        sinkTransformation.setColumnLineage(
+                new TransformationColumnLineage(Arrays.asList("result"), Arrays.asList(relation)));
+
+        LineageGraph lineageGraph =
+                LineageGraphUtils.convertToLineageGraph(Arrays.asList(sink.getTransformation()));
+
+        assertThat(lineageGraph.columnRelations()).containsExactly(relation);
+    }
+
+    @Test
+    void testMissingTransformationColumnLineageRelationIsRejected() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSource<Long> source =
+                env.fromSource(new LineageSource(1L, 5L), WatermarkStrategy.noWatermarks(), "");
+        DataStreamSink<Long> sink = source.sinkTo(new LineageSink());
+        TransformationWithLineage<?> sinkTransformation =
+                (TransformationWithLineage<?>) sink.getTransformation();
+        sinkTransformation.setColumnLineage(
+                new TransformationColumnLineage(
+                        Collections.singletonList("result"), Collections.emptyList()));
+
+        assertThatThrownBy(
+                        () ->
+                                LineageGraphUtils.convertToLineageGraph(
+                                        Collections.singletonList(sink.getTransformation())))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(SINK_DATASET_NAME)
+                .hasMessageContaining("result")
+                .hasMessageContaining("missing output relation");
+    }
+
+    @Test
+    void testDataStreamTransformationWithoutColumnLineageRemainsCompatible() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSource<Long> source =
+                env.fromSource(new LineageSource(1L, 5L), WatermarkStrategy.noWatermarks(), "");
+        DataStreamSink<Long> sink = source.sinkTo(new LineageSink());
+
+        LineageGraph lineageGraph =
+                LineageGraphUtils.convertToLineageGraph(Arrays.asList(sink.getTransformation()));
+
+        assertThat(lineageGraph.columnRelations()).isEmpty();
+    }
+
+    @Test
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    void testExtractsColumnLineageFromArbitraryCarrierTransformation() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSource<Long> source =
+                env.fromSource(new LineageSource(1L, 5L), WatermarkStrategy.noWatermarks(), "");
+        GlobalCommitterTransform<?> carrier =
+                new GlobalCommitterTransform(source, ignored -> null, () -> null);
+        LineageDataset sourceDataset = dataset(SOURCE_DATASET_NAME, SOURCE_DATASET_NAMESPACE);
+        LineageDataset sinkDataset = dataset(SINK_DATASET_NAME, SINK_DATASET_NAMESPACE);
+        ColumnLineageRelation relation =
+                relation(
+                        sourceDataset,
+                        "value",
+                        ColumnLineageDependencyType.DIRECT,
+                        sinkDataset,
+                        "result",
+                        ColumnLineageOrigin.INPUT_FIELDS,
+                        "EXPRESSION");
+        carrier.setLineageVertex(LineageUtils.lineageVertexOf(sinkDataset));
+        carrier.setColumnLineage(
+                new TransformationColumnLineage(List.of("result"), List.of(relation)));
+
+        LineageGraph graph = LineageGraphUtils.convertToLineageGraph(List.of(carrier));
+
+        assertThat(graph.sinks()).containsExactly(carrier.getLineageVertex());
+        assertThat(graph.columnRelations()).containsExactly(relation);
+    }
+
+    @Test
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    void testRejectsCarrierWithoutExactlyOneNonSourceLineageDataset() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSource<Long> source =
+                env.fromSource(new LineageSource(1L, 5L), WatermarkStrategy.noWatermarks(), "");
+        LineageDataset sinkDataset = dataset(SINK_DATASET_NAME, SINK_DATASET_NAMESPACE);
+
+        for (LineageVertex invalidVertex :
+                Arrays.asList(
+                        null,
+                        LineageUtils.sourceLineageVertexOf(Boundedness.BOUNDED, sinkDataset),
+                        new DefaultLineageVertex(Collections.emptyList()),
+                        new DefaultLineageVertex(
+                                Arrays.asList(sinkDataset, dataset("other", "sink://other"))))) {
+            GlobalCommitterTransform<?> carrier =
+                    new GlobalCommitterTransform(source, ignored -> null, () -> null);
+            carrier.setLineageVertex(invalidVertex);
+            carrier.setColumnLineage(
+                    new TransformationColumnLineage(
+                            List.of("result"),
+                            List.of(
+                                    new DefaultColumnLineageRelation(
+                                            sinkDataset,
+                                            "result",
+                                            Collections.emptyList(),
+                                            ColumnLineageOrigin.CONSTANT,
+                                            null))));
+
+            assertThatThrownBy(() -> LineageGraphUtils.convertToLineageGraph(List.of(carrier)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("column lineage")
+                    .hasMessageContaining("sink lineage vertex");
+        }
+    }
+
+    @Test
+    void testMergesMultiplePhysicalWritesWithoutDroppingDependencyTypes() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSource<Long> source =
+                env.fromSource(new LineageSource(1L, 5L), WatermarkStrategy.noWatermarks(), "");
+        DataStreamSink<Long> first = source.sinkTo(new LineageSink());
+        DataStreamSink<Long> second = source.sinkTo(new LineageSink());
+        LineageDataset sourceDataset = dataset(SOURCE_DATASET_NAME, SOURCE_DATASET_NAMESPACE);
+        LineageDataset sinkDataset = dataset(SINK_DATASET_NAME, SINK_DATASET_NAMESPACE);
+        setColumnLineage(
+                first,
+                relation(
+                        sourceDataset,
+                        "value",
+                        ColumnLineageDependencyType.DIRECT,
+                        sinkDataset,
+                        "result",
+                        ColumnLineageOrigin.INPUT_FIELDS,
+                        "EXPRESSION"));
+        setColumnLineage(
+                second,
+                relation(
+                        sourceDataset,
+                        "value",
+                        ColumnLineageDependencyType.INDIRECT,
+                        sinkDataset,
+                        "result",
+                        ColumnLineageOrigin.SYSTEM,
+                        "FILTER"));
+
+        LineageGraph graph =
+                LineageGraphUtils.convertToLineageGraph(
+                        Arrays.asList(first.getTransformation(), second.getTransformation()));
+
+        assertThat(graph.columnRelations()).hasSize(1);
+        ColumnLineageRelation merged = graph.columnRelations().get(0);
+        assertThat(merged.inputs())
+                .extracting(ColumnLineageInput::dependencyType)
+                .containsExactlyInAnyOrder(
+                        ColumnLineageDependencyType.DIRECT, ColumnLineageDependencyType.INDIRECT);
+        assertThat(merged.origin()).isEqualTo(ColumnLineageOrigin.INPUT_FIELDS);
+        assertThat(merged.transformation()).hasValue("EXPRESSION,FILTER,UNION");
+    }
+
+    @Test
+    void testUnionsExpectedFieldsFromPartialPhysicalWrites() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSource<Long> source =
+                env.fromSource(new LineageSource(1L, 5L), WatermarkStrategy.noWatermarks(), "");
+        DataStreamSink<Long> first = source.sinkTo(new LineageSink());
+        DataStreamSink<Long> second = source.sinkTo(new LineageSink());
+        LineageDataset sourceDataset = dataset(SOURCE_DATASET_NAME, SOURCE_DATASET_NAMESPACE);
+        LineageDataset sinkDataset = dataset(SINK_DATASET_NAME, SINK_DATASET_NAMESPACE);
+        setColumnLineage(
+                first,
+                relation(
+                        sourceDataset,
+                        "value",
+                        ColumnLineageDependencyType.DIRECT,
+                        sinkDataset,
+                        "left_result",
+                        ColumnLineageOrigin.INPUT_FIELDS,
+                        null));
+        setColumnLineage(
+                second,
+                relation(
+                        sourceDataset,
+                        "value",
+                        ColumnLineageDependencyType.DIRECT,
+                        sinkDataset,
+                        "right_result",
+                        ColumnLineageOrigin.INPUT_FIELDS,
+                        null));
+
+        LineageGraph graph =
+                LineageGraphUtils.convertToLineageGraph(
+                        Arrays.asList(first.getTransformation(), second.getTransformation()));
+
+        assertThat(graph.columnRelations())
+                .extracting(ColumnLineageRelation::outputField)
+                .containsExactlyInAnyOrder("left_result", "right_result");
+    }
+
+    private static void setColumnLineage(
+            DataStreamSink<Long> sink, ColumnLineageRelation relation) {
+        ((TransformationWithLineage<?>) sink.getTransformation())
+                .setColumnLineage(
+                        new TransformationColumnLineage(
+                                List.of(relation.outputField()), List.of(relation)));
+    }
+
+    private static ColumnLineageRelation relation(
+            LineageDataset source,
+            String inputField,
+            ColumnLineageDependencyType dependencyType,
+            LineageDataset sink,
+            String outputField,
+            ColumnLineageOrigin origin,
+            String transformation) {
+        return new DefaultColumnLineageRelation(
+                sink,
+                outputField,
+                List.of(new DefaultColumnLineageInput(source, inputField, dependencyType)),
+                origin,
+                transformation);
+    }
+
+    private static LineageDataset dataset(String name, String namespace) {
+        return new DefaultLineageDataset(name, namespace, new HashMap<>());
     }
 
     private static class LineageSink extends DiscardingSink<Long> implements LineageVertexProvider {

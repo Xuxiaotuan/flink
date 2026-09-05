@@ -56,4 +56,32 @@ public interface LineageVertexProvider {
 
 For the interface details, please refer to [FLIP-314](https://cwiki.apache.org/confluence/display/FLINK/FLIP-314%3A+Support+Customized+Job+Lineage+Listener).
 
+## Complete SQL column lineage in this development branch
+
+This branch captures logical table and column dependencies before optimization
+and carries them through direct translation and compiled-plan restore. If the
+optimizer removes a scan, such as in `WHERE 1=0`, its dependency remains in the
+lineage graph without restoring a source transformation. The graph represents
+SQL dependencies, not an audit of tables physically read by the job.
+
+Compiled sink metadata includes `prunedSources`: an empty list certifies that
+no logical source was removed; entries freeze the identities, namespaces and
+resolved table definitions of removed scans. Runtime sources must match the
+remaining expected identities exactly. Missing runtime sources, conflicting
+pruning metadata and unresolved input fields remain errors before submission.
+Older plans without `prunedSources` must be recompiled; manually adding an empty
+list is not a supported migration.
+
+Freezing removed scans requires `table.plan.compile.catalog-objects=ALL`.
+Snapshots include schema and connector options, even for temporary tables, so
+compiled plans must be protected as sensitive artifacts. `SCHEMA` and
+`IDENTIFIER` policies are not silently overridden. Source, input-format and
+legacy source-function providers can supply snapshots without running a job;
+providers requiring a DataStream/transformation execution to establish identity
+and ambiguous definitions of the same pruned table are rejected.
+
+The lineage extraction gate does not guarantee that an external listener has
+successfully delivered the event. Delivery semantics are the listener's
+responsibility and require separate validation.
+
 {{< top >}}

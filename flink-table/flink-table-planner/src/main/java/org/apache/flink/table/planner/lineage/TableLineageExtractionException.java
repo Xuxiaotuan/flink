@@ -14,33 +14,17 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
  */
 
-package org.apache.flink.streaming.api.lineage;
+package org.apache.flink.table.planner.lineage;
 
-import org.apache.flink.annotation.PublicEvolving;
+import org.apache.flink.annotation.Internal;
 
-import java.util.Collections;
-import java.util.List;
+/** Signals that complete column lineage cannot be proven for a table plan. */
+@Internal
+public final class TableLineageExtractionException extends RuntimeException {
 
-/**
- * Job lineage graph that users can get sources, sinks and relationships from lineage and manage the
- * relationship between jobs and tables.
- */
-@PublicEvolving
-public interface LineageGraph {
-    /* Source lineage vertex list. */
-    List<SourceLineageVertex> sources();
-
-    /* Sink lineage vertex list. */
-    List<LineageVertex> sinks();
-
-    /* lineage edges from sources to sinks. */
-    List<LineageEdge> relations();
-
-    /** Column lineage relations grouped by output dataset field. */
-    default List<ColumnLineageRelation> columnRelations() {
-        return Collections.emptyList();
+    public TableLineageExtractionException(String message) {
+        super(message);
     }
 }

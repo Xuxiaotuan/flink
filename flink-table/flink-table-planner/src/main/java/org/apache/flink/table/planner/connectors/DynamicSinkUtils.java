@@ -1396,6 +1396,11 @@ public final class DynamicSinkUtils {
         return new RowType(false, rowFields);
     }
 
+    /** Returns whether this is an internal client-result or Table-to-DataStream sink. */
+    public static boolean isInternalSinkWithoutLineage(DynamicTableSink sink) {
+        return sink instanceof CollectDynamicSink || sink instanceof ExternalDynamicSink;
+    }
+
     private DynamicSinkUtils() {
         // no instantiation
     }

@@ -23,6 +23,8 @@ import org.apache.flink.table.catalog.CatalogBaseTable;
 import org.apache.flink.table.catalog.ObjectPath;
 import org.apache.flink.table.catalog.listener.CatalogContext;
 
+import java.util.List;
+
 /** Basic table lineage dataset which has catalog context and table in it. */
 public interface TableLineageDataset extends LineageDataset {
 
@@ -34,4 +36,7 @@ public interface TableLineageDataset extends LineageDataset {
 
     /* Database name and table name for the table lineage vertex. */
     ObjectPath objectPath();
+
+    /* SQL-visible resolved field names for validating column lineage inputs. */
+    List<String> fieldNames();
 }

@@ -29,8 +29,16 @@ import org.apache.flink.streaming.api.datastream.DataStreamSink;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.sink.legacy.OutputFormatSinkFunction;
 import org.apache.flink.streaming.api.functions.sink.legacy.SinkFunction;
+import org.apache.flink.streaming.api.lineage.ColumnLineageDependencyType;
+import org.apache.flink.streaming.api.lineage.ColumnLineageInput;
+import org.apache.flink.streaming.api.lineage.ColumnLineageOrigin;
+import org.apache.flink.streaming.api.lineage.ColumnLineageRelation;
+import org.apache.flink.streaming.api.lineage.DefaultColumnLineageInput;
+import org.apache.flink.streaming.api.lineage.DefaultColumnLineageRelation;
 import org.apache.flink.streaming.api.lineage.LineageDataset;
 import org.apache.flink.streaming.api.lineage.LineageVertex;
+import org.apache.flink.streaming.api.lineage.SourceLineageVertex;
+import org.apache.flink.streaming.api.lineage.TransformationColumnLineage;
 import org.apache.flink.streaming.api.operators.SimpleOperatorFactory;
 import org.apache.flink.streaming.api.transformations.LegacySinkTransformation;
 import org.apache.flink.streaming.api.transformations.PartitionTransformation;
@@ -55,9 +63,17 @@ import org.apache.flink.table.connector.sink.abilities.SupportsRowLevelUpdate;
 import org.apache.flink.table.connector.sink.legacy.SinkFunctionProvider;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.planner.connectors.DynamicSinkUtils;
+import org.apache.flink.table.planner.lineage.PlannerColumnLineageInput;
+import org.apache.flink.table.planner.lineage.PlannerColumnLineageRelation;
+import org.apache.flink.table.planner.lineage.PlannerLineageDataset;
+import org.apache.flink.table.planner.lineage.PlannerPrunedSource;
+import org.apache.flink.table.planner.lineage.PlannerSinkColumnLineage;
+import org.apache.flink.table.planner.lineage.TableLineageDataset;
+import org.apache.flink.table.planner.lineage.TableLineageExtractionException;
 import org.apache.flink.table.planner.lineage.TableLineageUtils;
 import org.apache.flink.table.planner.lineage.TableSinkLineageVertex;
 import org.apache.flink.table.planner.lineage.TableSinkLineageVertexImpl;
+import org.apache.flink.table.planner.lineage.TableSourceLineageVertexImpl;
 import org.apache.flink.table.planner.plan.abilities.sink.RowLevelDeleteSpec;
 import org.apache.flink.table.planner.plan.abilities.sink.RowLevelUpdateSpec;
 import org.apache.flink.table.planner.plan.abilities.sink.SinkAbilitySpec;
@@ -88,10 +104,19 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonPro
 
 import javax.annotation.Nullable;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -158,6 +183,11 @@ public abstract class CommonExecSink extends ExecNodeBase<Object>
                         new SinkRuntimeProviderContext(
                                 isBounded, tableSinkSpec.getTargetColumns()));
         final RowType persistedRowType = getPersistedRowType(schema, tableSink);
+        final boolean requiresColumnLineage = requiresColumnLineage(tableSink);
+        if (tableSinkSpec.getContextResolvedTable().isAnonymous() && requiresColumnLineage) {
+            throw lineageFailure(
+                    "<unknown>", "anonymous Table sink has no stable dataset identity");
+        }
         final int[] primaryKeys = getPrimaryKeyIndices(persistedRowType, schema);
         final int sinkParallelism = deriveSinkParallelism(inputTransform, runtimeProvider);
         sinkParallelismConfigured = isParallelismConfigured(runtimeProvider);
@@ -255,10 +285,232 @@ public abstract class CommonExecSink extends ExecNodeBase<Object>
                                 classLoader);
 
         if (transformation instanceof TransformationWithLineage) {
-            ((TransformationWithLineage<Object>) transformation)
-                    .setLineageVertex(sinkLineageVertex);
+            final TransformationWithLineage<Object> lineageTransformation =
+                    (TransformationWithLineage<Object>) transformation;
+            lineageTransformation.setLineageVertex(sinkLineageVertex);
+            if (requiresColumnLineage) {
+                lineageTransformation.setColumnLineage(
+                        createColumnLineage(inputTransform, tableSink, tableLineageDataset));
+            }
+        } else if (requiresColumnLineage) {
+            throw lineageFailure(
+                    "<unknown>",
+                    "sink runtime provider '"
+                            + runtimeProvider.getClass().getName()
+                            + "' cannot carry table column lineage");
         }
         return transformation;
+    }
+
+    private boolean requiresColumnLineage(DynamicTableSink tableSink) {
+        return !tableSinkSpec.getContextResolvedTable().isAnonymous()
+                || !DynamicSinkUtils.isInternalSinkWithoutLineage(tableSink);
+    }
+
+    private TransformationColumnLineage createColumnLineage(
+            Transformation<RowData> inputTransform,
+            DynamicTableSink tableSink,
+            LineageDataset sinkDataset) {
+        final PlannerSinkColumnLineage plannerLineage = tableSinkSpec.getColumnLineage();
+        if (plannerLineage == null) {
+            throw lineageFailure(
+                    "<unknown>", "compiled plan does not contain complete column lineage");
+        }
+        final String actualSinkKey = sinkIdentity();
+        if (!actualSinkKey.equals(plannerLineage.getSinkKey())) {
+            throw lineageFailure(
+                    "<unknown>",
+                    "compiled column lineage sink key '"
+                            + plannerLineage.getSinkKey()
+                            + "' does not match actual sink key '"
+                            + actualSinkKey
+                            + "'");
+        }
+        final List<String> actualOutputFields =
+                DynamicSinkUtils.createConsumedType(
+                                tableSinkSpec.getContextResolvedTable().getResolvedSchema(),
+                                tableSink)
+                        .getFieldNames();
+        if (!actualOutputFields.equals(plannerLineage.getExpectedOutputFields())) {
+            throw lineageFailure(
+                    "<unknown>",
+                    "compiled column lineage expected output fields "
+                            + plannerLineage.getExpectedOutputFields()
+                            + " do not match actual consumed fields "
+                            + actualOutputFields);
+        }
+
+        final Map<String, LineageDataset> sourceDatasets = collectSourceDatasets(inputTransform);
+        if (plannerLineage.getPrunedSources() == null) {
+            throw lineageFailure(
+                    "<unknown>",
+                    "compiled plan has no optimizer pruning evidence; recompile the plan");
+        }
+        final Map<String, PlannerPrunedSource> prunedSources = new LinkedHashMap<>();
+        for (PlannerPrunedSource pruned : plannerLineage.getPrunedSources()) {
+            if (pruned == null
+                    || !plannerLineage.getExpectedSources().contains(pruned.getDataset())
+                    || prunedSources.putIfAbsent(pruned.name(), pruned) != null
+                    || sourceDatasets.containsKey(pruned.name())) {
+                throw lineageFailure(
+                        "<unknown>",
+                        "invalid or conflicting pruned source identities; recompile the plan");
+            }
+        }
+        final Set<String> expectedSourceKeys =
+                plannerLineage.getExpectedSources().stream()
+                        .map(CommonExecSink::datasetKey)
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+        expectedSourceKeys.removeAll(prunedSources.keySet());
+        final Set<String> actualSourceKeys = new LinkedHashSet<>(sourceDatasets.keySet());
+        if (!actualSourceKeys.equals(expectedSourceKeys)) {
+            final Set<String> missingSources = new LinkedHashSet<>(expectedSourceKeys);
+            missingSources.removeAll(actualSourceKeys);
+            final Set<String> unexpectedSources = new LinkedHashSet<>(actualSourceKeys);
+            unexpectedSources.removeAll(expectedSourceKeys);
+            throw lineageFailure(
+                    "<unknown>",
+                    "actual source identities do not match compiled expected source identities; "
+                            + "missing="
+                            + missingSources
+                            + ", unexpected="
+                            + unexpectedSources);
+        }
+        // Only optimizer-certified snapshots may fill logical dependencies absent at runtime.
+        sourceDatasets.putAll(prunedSources);
+        final List<ColumnLineageRelation> relations = new ArrayList<>();
+        for (PlannerColumnLineageRelation plannerRelation : plannerLineage.getRelations()) {
+            final List<ColumnLineageInput> inputs = new ArrayList<>();
+            for (PlannerColumnLineageInput plannerInput : plannerRelation.getInputs()) {
+                final LineageDataset inputDataset =
+                        sourceDatasets.get(datasetKey(plannerInput.getDataset()));
+                if (inputDataset == null) {
+                    throw lineageFailure(
+                            plannerRelation.getOutputField(),
+                            "input dataset '"
+                                    + plannerInput.getDataset().asSerializableString()
+                                    + "' cannot be mapped to a source transformation");
+                }
+                if (!(inputDataset instanceof TableLineageDataset)) {
+                    throw lineageFailure(
+                            plannerRelation.getOutputField(),
+                            "input field '"
+                                    + plannerInput.getFieldName()
+                                    + "' cannot be verified because actual source schema for '"
+                                    + plannerInput.getDataset().asSerializableString()
+                                    + "' is unavailable");
+                }
+                final List<String> actualSourceFields =
+                        ((TableLineageDataset) inputDataset).fieldNames();
+                if (actualSourceFields == null
+                        || !actualSourceFields.contains(plannerInput.getFieldName())) {
+                    throw lineageFailure(
+                            plannerRelation.getOutputField(),
+                            "input field '"
+                                    + plannerInput.getFieldName()
+                                    + "' does not exist in actual source schema for '"
+                                    + plannerInput.getDataset().asSerializableString()
+                                    + "'");
+                }
+                inputs.add(
+                        new DefaultColumnLineageInput(
+                                inputDataset,
+                                plannerInput.getFieldName(),
+                                ColumnLineageDependencyType.valueOf(
+                                        plannerInput.getDependencyType().name())));
+            }
+            final String transformation =
+                    plannerRelation.getTransformations().isEmpty()
+                            ? null
+                            : plannerRelation.getTransformations().stream()
+                                    .map(Enum::name)
+                                    .collect(Collectors.joining(","));
+            relations.add(
+                    new DefaultColumnLineageRelation(
+                            sinkDataset,
+                            plannerRelation.getOutputField(),
+                            inputs,
+                            ColumnLineageOrigin.valueOf(plannerRelation.getOrigin().name()),
+                            transformation));
+        }
+        final List<SourceLineageVertex> prunedVertices = new ArrayList<>();
+        for (PlannerPrunedSource pruned : prunedSources.values()) {
+            prunedVertices.add(
+                    new TableSourceLineageVertexImpl(
+                            Collections.singletonList(pruned),
+                            // A removed scan contributes no unbounded runtime input.
+                            org.apache.flink.api.connector.source.Boundedness.BOUNDED));
+        }
+        return new TransformationColumnLineage(
+                plannerLineage.getExpectedOutputFields(), relations, prunedVertices);
+    }
+
+    private Map<String, LineageDataset> collectSourceDatasets(
+            Transformation<RowData> inputTransform) {
+        final Map<String, LineageDataset> sourceDatasets = new LinkedHashMap<>();
+        final Deque<Transformation<?>> pending = new ArrayDeque<>();
+        final Set<Transformation<?>> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        pending.add(inputTransform);
+        while (!pending.isEmpty()) {
+            final Transformation<?> transformation = pending.removeFirst();
+            if (!visited.add(transformation)) {
+                continue;
+            }
+            if (transformation instanceof TransformationWithLineage) {
+                final LineageVertex lineageVertex =
+                        ((TransformationWithLineage<?>) transformation).getLineageVertex();
+                if (lineageVertex instanceof SourceLineageVertex) {
+                    if (lineageVertex.datasets() == null || lineageVertex.datasets().isEmpty()) {
+                        throw lineageFailure(
+                                "<unknown>", "source transformation has no dataset identity");
+                    }
+                    for (LineageDataset dataset : lineageVertex.datasets()) {
+                        if (dataset == null
+                                || dataset.name() == null
+                                || dataset.name().trim().isEmpty()
+                                || dataset.namespace() == null
+                                || dataset.namespace().trim().isEmpty()) {
+                            throw lineageFailure(
+                                    "<unknown>",
+                                    "source transformation has an incomplete dataset identity");
+                        }
+                        final String key = dataset.name();
+                        final LineageDataset previous = sourceDatasets.putIfAbsent(key, dataset);
+                        if (previous != null
+                                && (!previous.name().equals(dataset.name())
+                                        || !previous.namespace().equals(dataset.namespace()))) {
+                            throw lineageFailure(
+                                    "<unknown>",
+                                    "source dataset identity '" + key + "' is ambiguous");
+                        }
+                    }
+                    continue;
+                }
+            }
+            pending.addAll(transformation.getInputs());
+        }
+        return sourceDatasets;
+    }
+
+    private static String datasetKey(PlannerLineageDataset dataset) {
+        return dataset.asSerializableString();
+    }
+
+    private TableLineageExtractionException lineageFailure(String field, String reason) {
+        return new TableLineageExtractionException(
+                "Cannot extract complete column lineage for sink '"
+                        + sinkIdentity()
+                        + "', field '"
+                        + field
+                        + "': "
+                        + reason
+                        + ".");
+    }
+
+    private String sinkIdentity() {
+        return tableSinkSpec.getContextResolvedTable().isAnonymous()
+                ? tableSinkSpec.getContextResolvedTable().getIdentifier().asSummaryString()
+                : tableSinkSpec.getContextResolvedTable().getIdentifier().asSerializableString();
     }
 
     /** Whether the conflict strategy has to detect rows that share a primary key. */

@@ -17,6 +17,8 @@
  */
 package org.apache.flink.table.planner.plan.optimize
 
+import org.apache.flink.table.planner.lineage.PlannerColumnLineagePlanBinder
+
 import org.apache.calcite.rel.RelNode
 
 /**
@@ -35,4 +37,7 @@ trait Optimizer {
    *   a list of RelNode represents an optimized RelNode DAG.
    */
   def optimize(roots: Seq[RelNode]): Seq[RelNode]
+
+  /** Optimizes roots while retaining lineage through sink reuse. */
+  def optimize(roots: Seq[RelNode], lineage: PlannerColumnLineagePlanBinder): Seq[RelNode]
 }

@@ -47,7 +47,10 @@ public class TableLineageUtils {
 
     public static LineageDataset createTableLineageDataset(
             ContextResolvedTable contextResolvedTable, Optional<LineageVertex> lineageDataset) {
-        String name = contextResolvedTable.getIdentifier().asSummaryString();
+        String name =
+                contextResolvedTable.isAnonymous()
+                        ? contextResolvedTable.getIdentifier().asSummaryString()
+                        : contextResolvedTable.getIdentifier().asSerializableString();
         TableLineageDatasetImpl tableLineageDataset =
                 new TableLineageDatasetImpl(
                         contextResolvedTable, findLineageDataset(name, lineageDataset));

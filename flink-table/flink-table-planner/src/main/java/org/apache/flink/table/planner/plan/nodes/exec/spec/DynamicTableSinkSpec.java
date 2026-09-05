@@ -24,6 +24,7 @@ import org.apache.flink.table.factories.DynamicTableSinkFactory;
 import org.apache.flink.table.factories.FactoryUtil;
 import org.apache.flink.table.module.Module;
 import org.apache.flink.table.planner.calcite.FlinkContext;
+import org.apache.flink.table.planner.lineage.PlannerSinkColumnLineage;
 import org.apache.flink.table.planner.plan.abilities.sink.SinkAbilitySpec;
 import org.apache.flink.table.planner.plan.abilities.sink.TargetColumnWritingSpec;
 
@@ -49,6 +50,7 @@ public class DynamicTableSinkSpec extends DynamicTableSpecBase {
     public static final String FIELD_NAME_SINK_ABILITIES = "abilities";
 
     public static final String FIELD_NAME_TARGET_COLUMNS = "targetColumns";
+    public static final String FIELD_NAME_COLUMN_LINEAGE = "columnLineage";
 
     private final ContextResolvedTable contextResolvedTable;
     private final @Nullable List<SinkAbilitySpec> sinkAbilities;
@@ -56,16 +58,28 @@ public class DynamicTableSinkSpec extends DynamicTableSpecBase {
     @Deprecated(since = "2.2")
     private final @Nullable int[][] targetColumns;
 
+    private @Nullable PlannerSinkColumnLineage columnLineage;
+
     private DynamicTableSink tableSink;
+
+    public DynamicTableSinkSpec(
+            ContextResolvedTable contextResolvedTable,
+            @Nullable List<SinkAbilitySpec> sinkAbilities,
+            @Nullable int[][] targetColumns) {
+        this(contextResolvedTable, sinkAbilities, targetColumns, null);
+    }
 
     @JsonCreator
     public DynamicTableSinkSpec(
             @JsonProperty(FIELD_NAME_CATALOG_TABLE) ContextResolvedTable contextResolvedTable,
             @Nullable @JsonProperty(FIELD_NAME_SINK_ABILITIES) List<SinkAbilitySpec> sinkAbilities,
-            @Nullable @JsonProperty(FIELD_NAME_TARGET_COLUMNS) int[][] targetColumns) {
+            @Nullable @JsonProperty(FIELD_NAME_TARGET_COLUMNS) int[][] targetColumns,
+            @Nullable @JsonProperty(FIELD_NAME_COLUMN_LINEAGE)
+                    PlannerSinkColumnLineage columnLineage) {
         this.contextResolvedTable = contextResolvedTable;
         this.sinkAbilities = sinkAbilities;
         this.targetColumns = targetColumns;
+        this.columnLineage = columnLineage;
     }
 
     @JsonGetter(FIELD_NAME_CATALOG_TABLE)
@@ -116,6 +130,17 @@ public class DynamicTableSinkSpec extends DynamicTableSpecBase {
         this.tableSink = tableSink;
     }
 
+    @JsonGetter(FIELD_NAME_COLUMN_LINEAGE)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @Nullable
+    public PlannerSinkColumnLineage getColumnLineage() {
+        return columnLineage;
+    }
+
+    public void setColumnLineage(PlannerSinkColumnLineage columnLineage) {
+        this.columnLineage = Objects.requireNonNull(columnLineage);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -128,12 +153,14 @@ public class DynamicTableSinkSpec extends DynamicTableSpecBase {
         return Objects.equals(contextResolvedTable, that.contextResolvedTable)
                 && Objects.equals(sinkAbilities, that.sinkAbilities)
                 && Objects.equals(tableSink, that.tableSink)
-                && Objects.equals(targetColumns, that.targetColumns);
+                && Objects.equals(targetColumns, that.targetColumns)
+                && Objects.equals(columnLineage, that.columnLineage);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(contextResolvedTable, sinkAbilities, targetColumns, tableSink);
+        return Objects.hash(
+                contextResolvedTable, sinkAbilities, targetColumns, tableSink, columnLineage);
     }
 
     @Override
@@ -147,6 +174,8 @@ public class DynamicTableSinkSpec extends DynamicTableSpecBase {
                 + targetColumns
                 + ", tableSink="
                 + tableSink
+                + ", columnLineage="
+                + columnLineage
                 + '}';
     }
 }

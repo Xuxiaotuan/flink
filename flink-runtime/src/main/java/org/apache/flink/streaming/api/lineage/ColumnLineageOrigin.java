@@ -14,33 +14,24 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
  */
 
 package org.apache.flink.streaming.api.lineage;
 
 import org.apache.flink.annotation.PublicEvolving;
 
-import java.util.Collections;
-import java.util.List;
-
-/**
- * Job lineage graph that users can get sources, sinks and relationships from lineage and manage the
- * relationship between jobs and tables.
- */
+/** Describes the direct origin of an output field's value. */
 @PublicEvolving
-public interface LineageGraph {
-    /* Source lineage vertex list. */
-    List<SourceLineageVertex> sources();
+public enum ColumnLineageOrigin {
+    /**
+     * The output value originates from one or more {@link ColumnLineageDependencyType#DIRECT}
+     * inputs.
+     */
+    INPUT_FIELDS,
 
-    /* Sink lineage vertex list. */
-    List<LineageVertex> sinks();
+    /** The output value is a constant. It may have indirect control dependencies. */
+    CONSTANT,
 
-    /* lineage edges from sources to sinks. */
-    List<LineageEdge> relations();
-
-    /** Column lineage relations grouped by output dataset field. */
-    default List<ColumnLineageRelation> columnRelations() {
-        return Collections.emptyList();
-    }
+    /** The output value is produced by the system. It may have indirect control dependencies. */
+    SYSTEM
 }

@@ -53,4 +53,27 @@ public interface LineageVertexProvider {
 
 接口详细信息请参考 [FLIP-314](https://cwiki.apache.org/confluence/display/FLINK/FLIP-314%3A+Support+Customized+Job+Lineage+Listener).
 
+## 本开发分支的完整 SQL 字段血缘
+
+本分支在优化前提取逻辑表和字段依赖，并将其传递到直接执行和编译计划恢复流程。
+当优化器删除扫描节点（例如 `WHERE 1=0`）时，血缘图仍保留该逻辑依赖，
+但不会把 Source Transformation 加回执行拓扑。因此，图表达的是 SQL 依赖，
+不能将每个输入表都解释为作业实际读取过的表。
+
+编译计划的 Sink 血缘元数据新增 `prunedSources`：空列表表示没有逻辑来源被裁剪；
+非空列表保存被裁剪来源的身份、namespace 和已解析表定义快照。
+运行时来源必须与扣除裁剪来源后的预期集合完全一致。
+真正缺失的运行时来源、冲突的裁剪信息以及不存在的输入字段仍会在提交前报错。
+缺少 `prunedSources` 的旧计划必须重新编译，不支持手工补空列表绕过检查。
+
+来源快照要求 `table.plan.compile.catalog-objects=ALL`，包含 schema 和连接器选项，
+临时表也不例外，因此编译计划应按敏感文件保护。
+不会静默覆盖 `SCHEMA` 或 `IDENTIFIER` 序列化策略。
+目前可从 Source、InputFormat 和已有的 SourceFunction Provider 获取快照而不运行作业；
+需要执行 DataStream／Transformation 才能确定身份的 Provider，以及同一个被裁剪表的歧义定义，
+仍会明确报错。
+
+上述门禁保证的是血缘提取完整性，不保证外部监听器已经成功送达事件；
+事件送达语义需要由监听器单独实现和验收。
+
 {{< top >}}

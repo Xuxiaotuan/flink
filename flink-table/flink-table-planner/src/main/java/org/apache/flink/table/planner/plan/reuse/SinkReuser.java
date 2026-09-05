@@ -18,6 +18,7 @@
 
 package org.apache.flink.table.planner.plan.reuse;
 
+import org.apache.flink.table.planner.lineage.PlannerColumnLineagePlanBinder;
 import org.apache.flink.table.planner.plan.abilities.sink.SinkAbilitySpec;
 import org.apache.flink.table.planner.plan.nodes.calcite.Sink;
 import org.apache.flink.table.planner.plan.nodes.physical.batch.BatchPhysicalUnion;
@@ -29,6 +30,8 @@ import org.apache.flink.util.Preconditions;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Union;
+
+import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -77,9 +80,15 @@ import java.util.stream.Collectors;
  */
 public class SinkReuser {
     private final boolean isStreamingMode;
+    @Nullable private final PlannerColumnLineagePlanBinder lineage;
 
     public SinkReuser(boolean isStreamingMode) {
+        this(isStreamingMode, null);
+    }
+
+    public SinkReuser(boolean isStreamingMode, @Nullable PlannerColumnLineagePlanBinder lineage) {
         this.isStreamingMode = isStreamingMode;
+        this.lineage = lineage;
     }
 
     public List<RelNode> reuseDuplicatedSink(List<RelNode> relNodes) {
@@ -116,6 +125,9 @@ public class SinkReuser {
 
                     // Use the first sink node as the final reused sink node
                     Sink reusedSink = originalSinks.get(0);
+                    if (lineage != null) {
+                        lineage.reuseSinks(originalSinks);
+                    }
 
                     Union unionForReusedSinks;
 
@@ -175,7 +187,7 @@ public class SinkReuser {
 
     private String getDigest(Sink sink) {
         List<String> digest = new ArrayList<>();
-        digest.add(sink.contextResolvedTable().getIdentifier().asSummaryString());
+        digest.add(sink.contextResolvedTable().getIdentifier().asSerializableString());
 
         int[][] targetColumns = sink.targetColumns();
         if (targetColumns != null && targetColumns.length > 0) {

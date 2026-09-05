@@ -27,7 +27,10 @@ import org.apache.flink.table.catalog.listener.CatalogContext;
 
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -39,12 +42,28 @@ public class TableLineageDatasetImpl implements TableLineageDataset {
     private CatalogBaseTable catalogBaseTable;
     @JsonProperty private ObjectPath objectPath;
     @JsonProperty private Map<String, LineageDatasetFacet> facets;
+    private List<String> fieldNames;
 
     public TableLineageDatasetImpl(
             ContextResolvedTable contextResolvedTable, Optional<LineageDataset> lineageDatasetOpt) {
-        this.name = contextResolvedTable.getIdentifier().asSummaryString();
+        this.name =
+                contextResolvedTable.isAnonymous()
+                        ? contextResolvedTable.getIdentifier().asSummaryString()
+                        : contextResolvedTable.getIdentifier().asSerializableString();
+        Optional<String> stableNamespace =
+                lineageDatasetOpt
+                        .map(LineageDataset::namespace)
+                        .filter(namespace -> !namespace.trim().isEmpty());
         this.namespace =
-                lineageDatasetOpt.map(lineageDataset -> lineageDataset.namespace()).orElse("");
+                stableNamespace.orElseGet(
+                        () ->
+                                contextResolvedTable.isAnonymous()
+                                        ? ""
+                                        : "flink://catalog/"
+                                                + encodePathSegment(
+                                                        contextResolvedTable
+                                                                .getIdentifier()
+                                                                .getCatalogName()));
         this.catalogContext =
                 CatalogContext.createContext(
                         contextResolvedTable.getCatalog().isPresent()
@@ -52,6 +71,7 @@ public class TableLineageDatasetImpl implements TableLineageDataset {
                                 : "",
                         contextResolvedTable.getCatalog().orElse(null));
         this.catalogBaseTable = contextResolvedTable.getTable();
+        this.fieldNames = List.copyOf(contextResolvedTable.getResolvedSchema().getColumnNames());
         this.objectPath =
                 contextResolvedTable.isAnonymous()
                         ? null
@@ -94,5 +114,14 @@ public class TableLineageDatasetImpl implements TableLineageDataset {
     @Override
     public ObjectPath objectPath() {
         return objectPath;
+    }
+
+    @Override
+    public List<String> fieldNames() {
+        return fieldNames;
+    }
+
+    private static String encodePathSegment(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 }

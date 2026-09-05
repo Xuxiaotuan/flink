@@ -18,7 +18,9 @@
 
 package org.apache.flink.table.planner.lineage;
 
+import org.apache.flink.streaming.api.lineage.DefaultLineageDataset;
 import org.apache.flink.streaming.api.lineage.LineageDataset;
+import org.apache.flink.streaming.api.lineage.LineageUtils;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.catalog.Catalog;
@@ -41,6 +43,7 @@ import java.util.Optional;
 import static org.apache.flink.table.planner.lineage.TableLineageUtils.createTableLineageDataset;
 import static org.apache.flink.table.utils.CatalogManagerMocks.DEFAULT_CATALOG;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Test for {@link TableLineageUtils}. */
 class TableLineageUtilsTest {
@@ -83,13 +86,25 @@ class TableLineageUtilsTest {
                                         .build(),
                                 CATALOG_TABLE_RESOLVED_SCHEMA));
 
-        LineageDataset lineageDataset = createTableLineageDataset(resolvedTable, Optional.empty());
+        LineageDataset lineageDataset =
+                createTableLineageDataset(
+                        resolvedTable,
+                        Optional.of(
+                                LineageUtils.lineageVertexOf(
+                                        new DefaultLineageDataset(
+                                                objectIdentifier.asSerializableString(),
+                                                "test://catalog",
+                                                Collections.emptyMap()))));
         assertThat(lineageDataset).isInstanceOf(TableLineageDatasetImpl.class);
 
         TableLineageDatasetImpl tableLineageDataset = (TableLineageDatasetImpl) lineageDataset;
         assertThat(tableLineageDataset.catalogContext().getCatalogName())
                 .isEqualTo(DEFAULT_CATALOG);
-        assertThat(tableLineageDataset.name()).isEqualTo(objectIdentifier.asSummaryString());
+        assertThat(tableLineageDataset.name()).isEqualTo(objectIdentifier.asSerializableString());
+        assertThat(tableLineageDataset.namespace()).isEqualTo("test://catalog");
+        assertThat(tableLineageDataset.fieldNames()).containsExactly("a", "b", "c");
+        assertThatThrownBy(() -> tableLineageDataset.fieldNames().add("unexpected"))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
@@ -108,11 +123,85 @@ class TableLineageUtilsTest {
                                         .build(),
                                 CATALOG_TABLE_RESOLVED_SCHEMA));
 
-        LineageDataset lineageDataset = createTableLineageDataset(resolvedTable, Optional.empty());
+        LineageDataset lineageDataset =
+                createTableLineageDataset(
+                        resolvedTable,
+                        Optional.of(
+                                LineageUtils.lineageVertexOf(
+                                        new DefaultLineageDataset(
+                                                objectIdentifier.asSerializableString(),
+                                                "test://temporary",
+                                                Collections.emptyMap()))));
         assertThat(lineageDataset).isInstanceOf(TableLineageDatasetImpl.class);
 
         TableLineageDatasetImpl tableLineageDataset = (TableLineageDatasetImpl) lineageDataset;
         assertThat(tableLineageDataset.catalogContext().getCatalogName()).isEmpty();
-        assertThat(tableLineageDataset.name()).isEqualTo(objectIdentifier.asSummaryString());
+        assertThat(tableLineageDataset.name()).isEqualTo(objectIdentifier.asSerializableString());
+        assertThat(tableLineageDataset.namespace()).isEqualTo("test://temporary");
+    }
+
+    @Test
+    void testNamedTableWithoutConnectorNamespaceUsesLogicalCatalogNamespace() {
+        final ObjectIdentifier objectIdentifier =
+                ObjectIdentifier.of(DEFAULT_CATALOG, "my_db", "missing_lineage_provider");
+        final ContextResolvedTable resolvedTable =
+                ContextResolvedTable.temporary(
+                        objectIdentifier,
+                        new ResolvedCatalogTable(
+                                CatalogTable.newBuilder()
+                                        .schema(CATALOG_TABLE_SCHEMA)
+                                        .comment("my table")
+                                        .partitionKeys(Collections.emptyList())
+                                        .options(TABLE_OPTIONS)
+                                        .build(),
+                                CATALOG_TABLE_RESOLVED_SCHEMA));
+
+        LineageDataset dataset = createTableLineageDataset(resolvedTable, Optional.empty());
+
+        assertThat(dataset.name()).isEqualTo(objectIdentifier.asSerializableString());
+        assertThat(dataset.namespace()).isEqualTo("flink://catalog/default_catalog");
+    }
+
+    @Test
+    void testDottedCatalogIdentityDoesNotCollideWithDatabaseComponent() {
+        final ObjectIdentifier dottedCatalog =
+                ObjectIdentifier.of("catalog.with.dot", "database", "orders");
+        final ObjectIdentifier dottedDatabase =
+                ObjectIdentifier.of("catalog", "with.dot.database", "orders");
+        final ContextResolvedTable first = temporaryTable(dottedCatalog);
+        final ContextResolvedTable second = temporaryTable(dottedDatabase);
+
+        LineageDataset firstDataset = createTableLineageDataset(first, Optional.empty());
+        LineageDataset secondDataset = createTableLineageDataset(second, Optional.empty());
+
+        assertThat(firstDataset.namespace()).isEqualTo("flink://catalog/catalog.with.dot");
+        assertThat(secondDataset.namespace()).isEqualTo("flink://catalog/catalog");
+        assertThat(firstDataset.name()).isNotEqualTo(secondDataset.name());
+    }
+
+    @Test
+    void testAnonymousInternalTableDoesNotRequireSerializableIdentifier() {
+        final ContextResolvedTable anonymous =
+                ContextResolvedTable.anonymous(
+                        "internal-output",
+                        temporaryTable(ObjectIdentifier.of("c", "d", "t")).getResolvedTable());
+
+        LineageDataset dataset = createTableLineageDataset(anonymous, Optional.empty());
+
+        assertThat(dataset.name()).isNotBlank();
+        assertThat(dataset.namespace()).isEmpty();
+    }
+
+    private static ContextResolvedTable temporaryTable(ObjectIdentifier identifier) {
+        return ContextResolvedTable.temporary(
+                identifier,
+                new ResolvedCatalogTable(
+                        CatalogTable.newBuilder()
+                                .schema(CATALOG_TABLE_SCHEMA)
+                                .comment("my table")
+                                .partitionKeys(Collections.emptyList())
+                                .options(TABLE_OPTIONS)
+                                .build(),
+                        CATALOG_TABLE_RESOLVED_SCHEMA));
     }
 }
