@@ -1708,6 +1708,14 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
                                                                     DefaultJobExecutionStatusEvent
                                                                             .LINEAGE_COLUMN_STATUS,
                                                                     "UNAVAILABLE"),
+                                                    DefaultJobExecutionStatusEvent
+                                                            .LINEAGE_COLUMN_STATUSES,
+                                                    jobInformation
+                                                            .getJobConfiguration()
+                                                            .getString(
+                                                                    DefaultJobExecutionStatusEvent
+                                                                            .LINEAGE_COLUMN_STATUSES,
+                                                                    "{}"),
                                                     DefaultJobExecutionStatusEvent.LINEAGE_ISSUES,
                                                     jobInformation
                                                             .getJobConfiguration()

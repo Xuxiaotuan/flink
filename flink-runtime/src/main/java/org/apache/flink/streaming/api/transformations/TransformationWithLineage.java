@@ -37,6 +37,8 @@ import javax.annotation.Nullable;
 public abstract class TransformationWithLineage<T> extends PhysicalTransformation<T> {
     private LineageVertex lineageVertex;
     private @Nullable TransformationColumnLineage columnLineage;
+    private @Nullable org.apache.flink.streaming.api.lineage.TransformationTableLineage
+            tableLineage;
 
     /**
      * Creates a new {@code Transformation} with the given name, output type and parallelism.
@@ -102,5 +104,15 @@ public abstract class TransformationWithLineage<T> extends PhysicalTransformatio
     /** Attaches complete column lineage to a Table/SQL sink transformation. */
     public void setColumnLineage(TransformationColumnLineage columnLineage) {
         this.columnLineage = columnLineage;
+    }
+
+    @Nullable
+    public org.apache.flink.streaming.api.lineage.TransformationTableLineage getTableLineage() {
+        return tableLineage;
+    }
+
+    public void setTableLineage(
+            org.apache.flink.streaming.api.lineage.TransformationTableLineage tableLineage) {
+        this.tableLineage = tableLineage;
     }
 }

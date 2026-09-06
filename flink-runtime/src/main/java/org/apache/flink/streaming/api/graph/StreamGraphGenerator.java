@@ -287,6 +287,19 @@ public class StreamGraphGenerator {
                         org.apache.flink.core.execution.DefaultJobExecutionStatusEvent
                                 .LINEAGE_ISSUES,
                         String.join("\n", observation.getIssues()));
+        try {
+            streamGraph
+                    .getJobConfiguration()
+                    .setString(
+                            org.apache.flink.core.execution.DefaultJobExecutionStatusEvent
+                                    .LINEAGE_COLUMN_STATUSES,
+                            org.apache.flink.util.jackson.JacksonMapperFactory.createObjectMapper()
+                                    .writeValueAsString(observation.getColumnStatuses()));
+        } catch (org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException
+                | RuntimeException failure) {
+            LOG.warn(
+                    "Could not transfer per-dataset lineage status; execution continues.", failure);
+        }
 
         for (StreamNode node : streamGraph.getStreamNodes()) {
             if (node.getInEdges().stream()

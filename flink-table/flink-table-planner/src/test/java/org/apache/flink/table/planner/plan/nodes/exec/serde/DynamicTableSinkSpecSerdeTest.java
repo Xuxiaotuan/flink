@@ -43,7 +43,7 @@ import org.apache.flink.table.planner.lineage.PlannerColumnLineageOrigin;
 import org.apache.flink.table.planner.lineage.PlannerColumnLineageRelation;
 import org.apache.flink.table.planner.lineage.PlannerLineageDataset;
 import org.apache.flink.table.planner.lineage.PlannerSinkColumnLineage;
-import org.apache.flink.table.planner.lineage.TableLineageExtractionException;
+import org.apache.flink.table.planner.lineage.PlannerSinkTableLineage;
 import org.apache.flink.table.planner.plan.abilities.sink.OverwriteSpec;
 import org.apache.flink.table.planner.plan.abilities.sink.PartitioningSpec;
 import org.apache.flink.table.planner.plan.abilities.sink.TargetColumnWritingSpec;
@@ -82,12 +82,37 @@ import static org.apache.flink.table.planner.plan.nodes.exec.serde.JsonSerdeTest
 import static org.apache.flink.table.planner.plan.nodes.exec.serde.JsonSerdeTestUtil.toJson;
 import static org.apache.flink.table.planner.plan.nodes.exec.serde.JsonSerdeTestUtil.toObject;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.parallel.ExecutionMode.CONCURRENT;
 
 /** Tests for {@link DynamicTableSinkSpec} serialization and deserialization. */
 @Execution(CONCURRENT)
 class DynamicTableSinkSpecSerdeTest {
+
+    @Test
+    void testOptionalLineageDoesNotChangeExecutionIdentity() {
+        final DynamicTableSinkSpec spec = testDynamicTableSinkSpecSerde().findFirst().get();
+        final DynamicTableSinkSpec sameExecution =
+                new DynamicTableSinkSpec(spec.getContextResolvedTable(), null, null);
+        final java.util.Set<DynamicTableSinkSpec> cached = new java.util.HashSet<>();
+        cached.add(spec);
+        spec.setColumnLineage(
+                new PlannerSinkColumnLineage(
+                        spec.getContextResolvedTable().getIdentifier().asSerializableString(),
+                        Collections.emptyList(),
+                        Collections.emptyList(),
+                        Collections.emptyList()));
+
+        spec.setTableLineage(
+                new PlannerSinkTableLineage(
+                        spec.getContextResolvedTable().getIdentifier().asSerializableString(),
+                        Collections.emptyList(),
+                        Collections.emptyList()));
+
+        assertThat(spec).isEqualTo(sameExecution);
+        assertThat(spec.hashCode()).isEqualTo(sameExecution.hashCode());
+        assertThat(cached).contains(spec, sameExecution);
+        assertThat(spec.toString()).doesNotContain("PlannerSinkColumnLineage@");
+    }
 
     static Stream<DynamicTableSinkSpec> testDynamicTableSinkSpecSerde() {
         Map<String, String> options1 = new HashMap<>();
@@ -410,13 +435,12 @@ class DynamicTableSinkSpecSerdeTest {
 
         final JsonNode missingExpectedSources = new ObjectMapper().readTree(json);
         ((ObjectNode) missingExpectedSources.get("columnLineage")).remove("expectedSources");
-        assertThatThrownBy(
-                        () ->
-                                CompiledPlanSerdeUtil.createJsonObjectReader(serdeContext)
-                                        .readValue(
-                                                missingExpectedSources.toString(),
-                                                DynamicTableSinkSpec.class))
-                .hasRootCauseInstanceOf(TableLineageExtractionException.class);
+        final DynamicTableSinkSpec withoutOptionalLineage =
+                CompiledPlanSerdeUtil.createJsonObjectReader(serdeContext)
+                        .readValue(missingExpectedSources.toString(), DynamicTableSinkSpec.class);
+        assertThat(withoutOptionalLineage.getColumnLineage()).isNull();
+        assertThat(withoutOptionalLineage.getContextResolvedTable())
+                .isEqualTo(spec.getContextResolvedTable());
 
         final PlannerSinkColumnLineage constantLineage =
                 new PlannerSinkColumnLineage(

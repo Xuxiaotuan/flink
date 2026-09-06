@@ -20,7 +20,10 @@ package org.apache.flink.streaming.api.lineage;
 
 import org.apache.flink.annotation.Internal;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /** Captured lineage with explicit completeness, independent of job execution success. */
 @Internal
@@ -29,13 +32,26 @@ public final class LineageGraphObservation implements LineageGraph {
     private final String tableStatus;
     private final String columnStatus;
     private final List<String> issues;
+    private final Map<String, Map<String, String>> columnStatuses;
 
     public LineageGraphObservation(
             LineageGraph graph, String tableStatus, String columnStatus, List<String> issues) {
+        this(graph, tableStatus, columnStatus, issues, Collections.emptyMap());
+    }
+
+    public LineageGraphObservation(
+            LineageGraph graph,
+            String tableStatus,
+            String columnStatus,
+            List<String> issues,
+            Map<String, Map<String, String>> columnStatuses) {
         this.graph = graph;
         this.tableStatus = tableStatus;
         this.columnStatus = columnStatus;
         this.issues = List.copyOf(issues);
+        Map<String, Map<String, String>> copy = new LinkedHashMap<>();
+        columnStatuses.forEach((namespace, statuses) -> copy.put(namespace, Map.copyOf(statuses)));
+        this.columnStatuses = Collections.unmodifiableMap(copy);
     }
 
     public String getTableStatus() {
@@ -48,6 +64,11 @@ public final class LineageGraphObservation implements LineageGraph {
 
     public List<String> getIssues() {
         return issues;
+    }
+
+    /** Column completeness per namespace and output dataset, covering every writer. */
+    public Map<String, Map<String, String>> getColumnStatuses() {
+        return columnStatuses;
     }
 
     @Override

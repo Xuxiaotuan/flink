@@ -22,6 +22,7 @@ import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.streaming.api.lineage.ColumnLineageInput;
 import org.apache.flink.streaming.api.lineage.ColumnLineageRelation;
 import org.apache.flink.streaming.api.lineage.LineageGraph;
+import org.apache.flink.streaming.api.lineage.LineageGraphObservation;
 import org.apache.flink.streaming.api.lineage.LineageGraphUtils;
 import org.apache.flink.streaming.api.lineage.SourceLineageVertex;
 import org.apache.flink.streaming.api.transformations.PartitionTransformation;
@@ -69,6 +70,120 @@ class ColumnLineagePropagationTest {
 
     private static final String INSERT_SQL =
             "INSERT INTO LineageSink SELECT `value` + 1 FROM LineageSource";
+
+    @Test
+    void testUnsupportedColumnsPreserveIndependentTablesAndOtherSinkAcrossRestore()
+            throws Exception {
+        final TableEnvironmentImpl environment = createEnvironment();
+        createValuesTable(environment, "OtherSource", "value");
+        environment.createTemporaryTable(
+                "OtherSink",
+                TableDescriptor.forConnector("values")
+                        .schema(Schema.newBuilder().column("value", DataTypes.BIGINT()).build())
+                        .option("sink-insert-only", "false")
+                        .build());
+        final StatementSet statements = environment.createStatementSet();
+        statements.addInsertSql(INSERT_SQL);
+        statements.addInsertSql(
+                "INSERT INTO OtherSink SELECT `value` FROM LineageSource "
+                        + "INTERSECT SELECT `value` FROM OtherSource");
+        final String json = statements.compilePlan().asJsonString();
+        final LineageGraphObservation observation =
+                LineageGraphUtils.observe(
+                        CompiledPlanUtils.toTransformations(
+                                environment,
+                                environment.loadPlan(PlanReference.fromJsonString(json))));
+
+        assertThat(observation.getTableStatus()).isEqualTo("COMPLETE");
+        assertThat(observation.getColumnStatus()).isEqualTo("PARTIAL");
+        assertThat(observation.columnRelations())
+                .extracting(relation -> relation.outputDataset().name())
+                .containsExactly(identifier("LineageSink").asSerializableString());
+        assertThat(observation.relations())
+                .flatExtracting(edge -> edge.source().datasets())
+                .extracting(dataset -> dataset.name())
+                .contains(identifier("OtherSource").asSerializableString());
+    }
+
+    @Test
+    void testOldPlanWithoutIndependentTablesDoesNotClaimCompleteTableLineage() throws Exception {
+        final TableEnvironmentImpl environment = createEnvironment();
+        final JsonNode json =
+                new ObjectMapper().readTree(environment.compilePlanSql(INSERT_SQL).asJsonString());
+        assertThat(json.findParents("tableLineage")).hasSize(1);
+        json.findParents("tableLineage")
+                .forEach(parent -> ((ObjectNode) parent).remove("tableLineage"));
+        final LineageGraphObservation observation =
+                LineageGraphUtils.observe(
+                        CompiledPlanUtils.toTransformations(
+                                environment,
+                                environment.loadPlan(
+                                        PlanReference.fromJsonString(json.toString()))));
+        assertThat(observation.getTableStatus()).isEqualTo("PARTIAL");
+        assertThat(observation.getColumnStatus()).isEqualTo("COMPLETE");
+        assertThat(observation.columnRelations()).hasSize(1);
+    }
+
+    @Test
+    void testMixedWritersDoNotPublishPartialColumnsForSharedDataset() throws Exception {
+        for (boolean reuse : new boolean[] {false, true}) {
+            final TableEnvironmentImpl environment = createEnvironment();
+            createValuesTable(environment, "OtherSource", "value");
+            environment.createTemporaryTable(
+                    "SharedSink",
+                    TableDescriptor.forConnector("values")
+                            .schema(Schema.newBuilder().column("value", DataTypes.BIGINT()).build())
+                            .option("sink-insert-only", "false")
+                            .build());
+            environment
+                    .getConfig()
+                    .set(OptimizerConfigOptions.TABLE_OPTIMIZER_REUSE_SINK_ENABLED, reuse);
+            final StatementSet statements = environment.createStatementSet();
+            statements.addInsertSql(INSERT_SQL);
+            statements.addInsertSql("INSERT INTO SharedSink SELECT `value` FROM LineageSource");
+            statements.addInsertSql(
+                    "INSERT INTO SharedSink SELECT `value` FROM LineageSource INTERSECT SELECT `value` FROM OtherSource");
+            final LineageGraphObservation observation =
+                    LineageGraphUtils.observe(
+                            CompiledPlanUtils.toTransformations(
+                                    environment,
+                                    environment.loadPlan(
+                                            PlanReference.fromJsonString(
+                                                    statements.compilePlan().asJsonString()))));
+            assertThat(observation.getTableStatus()).isEqualTo("COMPLETE");
+            assertThat(observation.getColumnStatus()).isEqualTo("PARTIAL");
+            assertThat(observation.columnRelations())
+                    .extracting(relation -> relation.outputDataset().name())
+                    .containsExactly(identifier("LineageSink").asSerializableString());
+        }
+    }
+
+    @Test
+    void testUnsupportedColumnsKeepOptimizerPrunedLogicalTables() throws Exception {
+        final TableEnvironmentImpl environment = createEnvironment();
+        createValuesTable(environment, "OtherSource", "value");
+        final String json =
+                environment
+                        .compilePlanSql(
+                                "INSERT INTO LineageSink SELECT `value` FROM LineageSource WHERE 1=0 "
+                                        + "INTERSECT SELECT `value` FROM OtherSource WHERE 1=0")
+                        .asJsonString();
+        environment.dropTemporaryTable("LineageSource");
+        environment.dropTemporaryTable("OtherSource");
+        final LineageGraphObservation observation =
+                LineageGraphUtils.observe(
+                        CompiledPlanUtils.toTransformations(
+                                environment,
+                                environment.loadPlan(PlanReference.fromJsonString(json))));
+        assertThat(observation.getTableStatus()).isEqualTo("COMPLETE");
+        assertThat(observation.getColumnStatus()).isEqualTo("UNAVAILABLE");
+        assertThat(observation.sources())
+                .flatExtracting(SourceLineageVertex::datasets)
+                .extracting(dataset -> dataset.name())
+                .containsExactlyInAnyOrder(
+                        identifier("LineageSource").asSerializableString(),
+                        identifier("OtherSource").asSerializableString());
+    }
 
     @Test
     void testPrunedSourceRetainsLogicalLineageWithoutRuntimeRead() throws Exception {

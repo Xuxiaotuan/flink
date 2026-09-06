@@ -32,6 +32,7 @@ import java.util.Map;
 public class DefaultJobExecutionStatusEvent implements JobExecutionStatusEvent {
     public static final String LINEAGE_TABLE_STATUS = "internal.lineage.table-status";
     public static final String LINEAGE_COLUMN_STATUS = "internal.lineage.column-status";
+    public static final String LINEAGE_COLUMN_STATUSES = "internal.lineage.column-statuses";
     public static final String LINEAGE_ISSUES = "internal.lineage.issues";
     private final Map<String, String> lineageStatus;
     private final JobID jobId;

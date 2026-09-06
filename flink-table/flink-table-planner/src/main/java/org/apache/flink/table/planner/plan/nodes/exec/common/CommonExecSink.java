@@ -285,6 +285,15 @@ public abstract class CommonExecSink extends ExecNodeBase<Object>
                 final TransformationWithLineage<Object> lineageTransformation =
                         (TransformationWithLineage<Object>) transformation;
                 lineageTransformation.setLineageVertex(sinkLineageVertex);
+                try {
+                    lineageTransformation.setTableLineage(createTableLineage(inputTransform));
+                } catch (RuntimeException error) {
+                    org.slf4j.LoggerFactory.getLogger(CommonExecSink.class)
+                            .warn(
+                                    "Logical table lineage unavailable for sink {}; execution continues.",
+                                    sinkIdentity(),
+                                    error);
+                }
                 if (requiresColumnLineage) {
                     lineageTransformation.setColumnLineage(
                             createColumnLineage(inputTransform, tableSink, tableLineageDataset));
@@ -315,6 +324,59 @@ public abstract class CommonExecSink extends ExecNodeBase<Object>
     private boolean requiresColumnLineage(DynamicTableSink tableSink) {
         return !tableSinkSpec.getContextResolvedTable().isAnonymous()
                 || !DynamicSinkUtils.isInternalSinkWithoutLineage(tableSink);
+    }
+
+    private org.apache.flink.streaming.api.lineage.TransformationTableLineage createTableLineage(
+            Transformation<RowData> inputTransform) {
+        org.apache.flink.table.planner.lineage.PlannerSinkTableLineage table =
+                tableSinkSpec.getTableLineage();
+        if (table == null) {
+            return null;
+        }
+        if (!sinkIdentity().equals(table.getSinkKey())) {
+            throw lineageFailure("<unknown>", "logical table sink identity mismatch");
+        }
+        Map<String, LineageDataset> actual = collectSourceDatasets(inputTransform);
+        Set<String> expected =
+                table.getExpectedSources().stream()
+                        .map(CommonExecSink::datasetKey)
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<String, SourceLineageVertex> vertices = new LinkedHashMap<>();
+        for (Transformation<?> predecessor : inputTransform.getTransitivePredecessors()) {
+            if (predecessor instanceof TransformationWithLineage) {
+                LineageVertex vertex =
+                        ((TransformationWithLineage<?>) predecessor).getLineageVertex();
+                if (vertex instanceof SourceLineageVertex) {
+                    for (LineageDataset dataset : vertex.datasets()) {
+                        vertices.put(
+                                dataset.name(),
+                                new TableSourceLineageVertexImpl(
+                                        Collections.singletonList(dataset),
+                                        ((SourceLineageVertex) vertex).boundedness()));
+                    }
+                }
+            }
+        }
+        for (PlannerPrunedSource pruned : table.getPrunedSources()) {
+            if (!expected.contains(pruned.name())
+                    || actual.putIfAbsent(pruned.name(), pruned) != null) {
+                throw lineageFailure("<unknown>", "invalid pruned logical table source");
+            }
+            vertices.put(
+                    pruned.name(),
+                    new TableSourceLineageVertexImpl(
+                            Collections.singletonList(pruned),
+                            org.apache.flink.api.connector.source.Boundedness.BOUNDED));
+        }
+        if (!actual.keySet().equals(expected) || !vertices.keySet().containsAll(expected)) {
+            throw lineageFailure(
+                    "<unknown>", "runtime sources do not match verified logical table sources");
+        }
+        List<SourceLineageVertex> sources = new ArrayList<>();
+        for (String key : expected) {
+            sources.add(vertices.get(key));
+        }
+        return new org.apache.flink.streaming.api.lineage.TransformationTableLineage(sources);
     }
 
     private TransformationColumnLineage createColumnLineage(

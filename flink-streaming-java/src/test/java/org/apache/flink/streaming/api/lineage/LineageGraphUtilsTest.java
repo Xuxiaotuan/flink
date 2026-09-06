@@ -45,6 +45,108 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** Testing for lineage graph util. */
 class LineageGraphUtilsTest {
     @Test
+    void unknownSinkPreventsCompleteStatusWithoutDiscardingKnownColumns() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSource<Long> source =
+                env.fromSource(
+                        new LineageSource(1L, 5L), WatermarkStrategy.noWatermarks(), "source");
+        DataStreamSink<Long> good = annotatedSink(source, "good", "result");
+        DataStreamSink<Long> unknown = source.sinkTo(new DiscardingSink<>());
+        unknown.getTransformation().setLineageFailure("Missing sink identity");
+        LineageGraphObservation observation =
+                LineageGraphUtils.observe(
+                        List.of(good.getTransformation(), unknown.getTransformation()));
+        assertThat(observation.getColumnStatus()).isEqualTo("PARTIAL");
+        assertThat(observation.columnRelations())
+                .extracting(relation -> relation.outputDataset().name())
+                .containsExactly("good");
+        assertThat(observation.getColumnStatuses().get(SINK_DATASET_NAMESPACE))
+                .containsEntry("good", "COMPLETE");
+        assertThat(observation.getIssues()).isNotEmpty();
+    }
+
+    @Test
+    void independentlyValidPartialWritesMergeWithoutDiscardingSeparateOutput() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSource<Long> source =
+                env.fromSource(
+                        new LineageSource(1L, 5L), WatermarkStrategy.noWatermarks(), "source");
+        DataStreamSink<Long> left = annotatedSink(source, "shared", "left_result");
+        DataStreamSink<Long> right = annotatedSink(source, "shared", "right_result");
+        DataStreamSink<Long> other = annotatedSink(source, "other", "result");
+        LineageGraphObservation observation =
+                LineageGraphUtils.observe(
+                        List.of(
+                                left.getTransformation(),
+                                right.getTransformation(),
+                                other.getTransformation()));
+        assertThat(observation.getColumnStatus()).isEqualTo("COMPLETE");
+        assertThat(observation.columnRelations())
+                .extracting(
+                        relation -> relation.outputDataset().name() + "." + relation.outputField())
+                .containsExactlyInAnyOrder(
+                        "shared.left_result", "shared.right_result", "other.result");
+    }
+
+    private static DataStreamSink<Long> annotatedSink(
+            DataStreamSource<Long> source, String name, String field) {
+        DataStreamSink<Long> sink = source.sinkTo(new LineageSink());
+        LineageDataset output = dataset(name, SINK_DATASET_NAMESPACE);
+        ((TransformationWithLineage<?>) sink.getTransformation())
+                .setLineageVertex(LineageUtils.lineageVertexOf(output));
+        setColumnLineage(
+                sink,
+                relation(
+                        dataset(SOURCE_DATASET_NAME, SOURCE_DATASET_NAMESPACE),
+                        "value",
+                        ColumnLineageDependencyType.DIRECT,
+                        output,
+                        field,
+                        ColumnLineageOrigin.INPUT_FIELDS,
+                        null));
+        return sink;
+    }
+
+    @Test
+    void unavailableSinkDoesNotDiscardOtherDatasetColumns() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSource<Long> source =
+                env.fromSource(
+                        new LineageSource(1L, 5L), WatermarkStrategy.noWatermarks(), "source");
+        DataStreamSink<Long> annotated = source.sinkTo(new LineageSink());
+        DataStreamSink<Long> unavailable = source.sinkTo(new LineageSink());
+        ((TransformationWithLineage<?>) unavailable.getTransformation())
+                .setLineageVertex(LineageUtils.lineageVertexOf(dataset("other", "sink")));
+        unavailable.getTransformation().setLineageFailure("Unsupported column expression");
+        setColumnLineage(
+                annotated,
+                relation(
+                        dataset(SOURCE_DATASET_NAME, SOURCE_DATASET_NAMESPACE),
+                        "value",
+                        ColumnLineageDependencyType.DIRECT,
+                        dataset(SINK_DATASET_NAME, SINK_DATASET_NAMESPACE),
+                        "result",
+                        ColumnLineageOrigin.INPUT_FIELDS,
+                        null));
+
+        LineageGraphObservation observation =
+                LineageGraphUtils.observe(
+                        List.of(annotated.getTransformation(), unavailable.getTransformation()));
+
+        assertThat(
+                        env.getStreamGraph()
+                                .getJobConfiguration()
+                                .getString("internal.lineage.column-statuses", "{}"))
+                .contains("\"sink://LineageSink\":{\"LineageSink\":\"COMPLETE\"}")
+                .contains("\"sink\":{\"other\":\"UNAVAILABLE\"}");
+        assertThat(observation.getTableStatus()).isEqualTo("PARTIAL");
+        assertThat(observation.getColumnStatus()).isEqualTo("PARTIAL");
+        assertThat(observation.columnRelations())
+                .extracting(relation -> relation.outputDataset().name())
+                .containsExactly(SINK_DATASET_NAME);
+    }
+
+    @Test
     void sameDatasetWritersRequireColumnMetadataForEveryWriter() {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         DataStreamSource<Long> source =
