@@ -24,6 +24,7 @@ import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecEdge;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNode;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeGraph;
+import org.apache.flink.table.planner.plan.nodes.exec.batch.BatchExecMultipleInput;
 import org.apache.flink.table.planner.plan.nodes.exec.visitor.ExecNodeVisitor;
 import org.apache.flink.table.planner.plan.nodes.exec.visitor.ExecNodeVisitorImpl;
 
@@ -90,6 +91,10 @@ final class JsonPlanGraph {
                             return;
                         }
                         super.visitInputs(node);
+                        if (node instanceof BatchExecMultipleInput) {
+                            BatchExecMultipleInput multiple = (BatchExecMultipleInput) node;
+                            multiple.getMemberExecNodes().forEach(this::visit);
+                        }
 
                         final int id = node.getId();
                         if (nodesIds.contains(id)) {
@@ -152,15 +157,38 @@ final class JsonPlanGraph {
             idToOutputEdges.computeIfAbsent(source.getId(), n -> new ArrayList<>()).add(execEdge);
         }
 
-        List<ExecNode<?>> rootNodes = new ArrayList<>();
+        // Connect every edge before resolving references inside fused subgraphs.
         for (Map.Entry<Integer, ExecNode<?>> entry : idToExecNodes.entrySet()) {
             int id = entry.getKey();
             ExecNode<?> node = entry.getValue();
             // connect input edges
             List<ExecEdge> inputEdges = idToInputEdges.getOrDefault(id, new ArrayList<>());
             node.setInputEdges(inputEdges);
+        }
 
-            if (!idToOutputEdges.containsKey(id)) {
+        Set<Integer> internalNodeIds = new HashSet<>();
+        for (ExecNode<?> node : nodes) {
+            if (node instanceof BatchExecMultipleInput) {
+                BatchExecMultipleInput multiple = (BatchExecMultipleInput) node;
+                multiple.resolveSubgraph(idToExecNodes);
+                for (ExecNode<?> member : multiple.getMemberExecNodes()) {
+                    checkArgument(
+                            internalNodeIds.add(member.getId()),
+                            "Multiple-input member has multiple owners");
+                    for (ExecEdge output :
+                            idToOutputEdges.getOrDefault(member.getId(), new ArrayList<>())) {
+                        checkArgument(
+                                multiple.getMemberExecNodes().contains(output.getTarget()),
+                                "Multiple-input member escapes its subgraph");
+                    }
+                }
+            }
+        }
+
+        List<ExecNode<?>> rootNodes = new ArrayList<>();
+        for (ExecNode<?> node : nodes) {
+            if (!idToOutputEdges.containsKey(node.getId())
+                    && !internalNodeIds.contains(node.getId())) {
                 // if the node has no output nodes, it's a root node
                 rootNodes.add(node);
             }

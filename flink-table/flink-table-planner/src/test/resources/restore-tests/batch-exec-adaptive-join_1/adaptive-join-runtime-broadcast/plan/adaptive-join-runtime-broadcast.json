@@ -1,0 +1,289 @@
+{
+  "flinkVersion" : "2.4",
+  "nodes" : [ {
+    "id" : 1,
+    "type" : "batch-exec-table-source-scan_1",
+    "scanTableSource" : {
+      "table" : {
+        "identifier" : "`default_catalog`.`default_database`.`left_input`",
+        "resolvedTable" : {
+          "schema" : {
+            "columns" : [ {
+              "name" : "k",
+              "dataType" : "INT"
+            }, {
+              "name" : "v",
+              "dataType" : "INT"
+            } ]
+          }
+        }
+      }
+    },
+    "outputType" : "ROW<`k` INT, `v` INT>",
+    "description" : "TableSourceScan(table=[[default_catalog, default_database, left_input]], fields=[k, v])",
+    "dynamicFilteringDataListenerID" : "fd69c1a6-ad7e-4b5b-95c4-3ae5b78f6821"
+  }, {
+    "id" : 2,
+    "type" : "batch-exec-exchange_1",
+    "inputProperties" : [ {
+      "requiredDistribution" : {
+        "type" : "HASH",
+        "keys" : [ 0 ]
+      },
+      "damBehavior" : "BLOCKING",
+      "priority" : 0
+    } ],
+    "outputType" : "ROW<`k` INT, `v` INT>",
+    "description" : "Exchange(distribution=[hash[k]])",
+    "requiredExchangeMode" : "UNDEFINED"
+  }, {
+    "id" : 3,
+    "type" : "batch-exec-table-source-scan_1",
+    "scanTableSource" : {
+      "table" : {
+        "identifier" : "`default_catalog`.`default_database`.`right_input`",
+        "resolvedTable" : {
+          "schema" : {
+            "columns" : [ {
+              "name" : "k",
+              "dataType" : "INT"
+            }, {
+              "name" : "v",
+              "dataType" : "INT"
+            } ]
+          }
+        }
+      }
+    },
+    "outputType" : "ROW<`k` INT, `v` INT>",
+    "description" : "TableSourceScan(table=[[default_catalog, default_database, right_input]], fields=[k, v])",
+    "dynamicFilteringDataListenerID" : "3c7a6f94-fd9e-4e1d-9b38-442739a5dd33"
+  }, {
+    "id" : 4,
+    "type" : "batch-exec-exchange_1",
+    "inputProperties" : [ {
+      "requiredDistribution" : {
+        "type" : "HASH",
+        "keys" : [ 0 ]
+      },
+      "damBehavior" : "BLOCKING",
+      "priority" : 0
+    } ],
+    "outputType" : "ROW<`k` INT, `v` INT>",
+    "description" : "Exchange(distribution=[hash[k]])",
+    "requiredExchangeMode" : "UNDEFINED"
+  }, {
+    "id" : 8,
+    "type" : "batch-exec-adaptive-join_1",
+    "configuration" : {
+      "table.exec.resource.external-buffer-memory" : "10 mb",
+      "table.exec.resource.hash-join.memory" : "128 mb",
+      "table.exec.resource.sort.memory" : "128 mb",
+      "table.exec.sort.async-merge-enabled" : "true",
+      "table.exec.sort.max-num-file-handles" : "128",
+      "table.exec.spill-compression.block-size" : "64 kb",
+      "table.exec.spill-compression.enabled" : "true"
+    },
+    "joinSpec" : {
+      "joinType" : "INNER",
+      "leftKeys" : [ 0 ],
+      "rightKeys" : [ 0 ],
+      "filterNulls" : [ true ],
+      "nonEquiCondition" : null
+    },
+    "estimatedLeftAvgRowSize" : 8,
+    "estimatedRightAvgRowSize" : 8,
+    "estimatedLeftRowCount" : 100000000,
+    "estimatedRightRowCount" : 100000000,
+    "leftIsBuild" : true,
+    "tryDistinctBuildRow" : false,
+    "inputProperties" : [ {
+      "requiredDistribution" : {
+        "type" : "HASH",
+        "keys" : [ 0 ]
+      },
+      "damBehavior" : "BLOCKING",
+      "priority" : 0
+    }, {
+      "requiredDistribution" : {
+        "type" : "HASH",
+        "keys" : [ 0 ]
+      },
+      "damBehavior" : "PIPELINED",
+      "priority" : 1
+    } ],
+    "outputType" : "ROW<`k` INT, `v` INT, `k0` INT, `v0` INT>",
+    "description" : "AdaptiveJoin(originalJoin=[ShuffleHashJoin], joinType=[InnerJoin], where=[(k = k0)], select=[k, v, k0, v0], build=[left])",
+    "originalJoin" : "ShuffleHashJoin"
+  }, {
+    "id" : 6,
+    "type" : "batch-exec-calc_1",
+    "projection" : [ {
+      "kind" : "INPUT_REF",
+      "inputIndex" : 0,
+      "type" : "INT"
+    }, {
+      "kind" : "CALL",
+      "syntax" : "BINARY",
+      "internalName" : "$+$1",
+      "operands" : [ {
+        "kind" : "INPUT_REF",
+        "inputIndex" : 1,
+        "type" : "INT"
+      }, {
+        "kind" : "INPUT_REF",
+        "inputIndex" : 3,
+        "type" : "INT"
+      } ],
+      "type" : "INT"
+    } ],
+    "condition" : null,
+    "inputProperties" : [ {
+      "requiredDistribution" : {
+        "type" : "UNKNOWN"
+      },
+      "damBehavior" : "PIPELINED",
+      "priority" : 0
+    } ],
+    "outputType" : "ROW<`k` INT, `EXPR$1` INT>",
+    "description" : "Calc(select=[k, (v + v0) AS EXPR$1])"
+  }, {
+    "id" : 7,
+    "type" : "batch-exec-sink_1",
+    "configuration" : {
+      "table.exec.sink.not-null-enforcer" : "ERROR",
+      "table.exec.sink.type-length-enforcer" : "IGNORE"
+    },
+    "dynamicTableSink" : {
+      "table" : {
+        "identifier" : "`default_catalog`.`default_database`.`sink`",
+        "resolvedTable" : {
+          "schema" : {
+            "columns" : [ {
+              "name" : "k",
+              "dataType" : "INT"
+            }, {
+              "name" : "v",
+              "dataType" : "INT"
+            } ]
+          }
+        }
+      },
+      "columnLineage" : {
+        "sinkKey" : "`default_catalog`.`default_database`.`sink`",
+        "expectedOutputFields" : [ "k", "v" ],
+        "expectedSources" : [ {
+          "qualifiedName" : [ "default_catalog", "default_database", "left_input" ]
+        }, {
+          "qualifiedName" : [ "default_catalog", "default_database", "right_input" ]
+        } ],
+        "relations" : [ {
+          "outputField" : "k",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "left_input" ]
+            },
+            "field" : "k",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "left_input" ]
+            },
+            "field" : "k",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "right_input" ]
+            },
+            "field" : "k",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "JOIN" ]
+        }, {
+          "outputField" : "v",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "left_input" ]
+            },
+            "field" : "v",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "right_input" ]
+            },
+            "field" : "v",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "left_input" ]
+            },
+            "field" : "k",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "right_input" ]
+            },
+            "field" : "k",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "EXPRESSION", "JOIN" ]
+        } ],
+        "prunedSources" : [ ]
+      }
+    },
+    "inputProperties" : [ {
+      "requiredDistribution" : {
+        "type" : "UNKNOWN"
+      },
+      "damBehavior" : "BLOCKING",
+      "priority" : 0
+    } ],
+    "outputType" : "ROW<`k` INT, `EXPR$1` INT>",
+    "description" : "Sink(table=[default_catalog.default_database.sink], fields=[k, EXPR$1])"
+  } ],
+  "edges" : [ {
+    "source" : 1,
+    "target" : 2,
+    "shuffle" : {
+      "type" : "FORWARD"
+    },
+    "shuffleMode" : "PIPELINED"
+  }, {
+    "source" : 3,
+    "target" : 4,
+    "shuffle" : {
+      "type" : "FORWARD"
+    },
+    "shuffleMode" : "PIPELINED"
+  }, {
+    "source" : 2,
+    "target" : 8,
+    "shuffle" : {
+      "type" : "FORWARD"
+    },
+    "shuffleMode" : "PIPELINED"
+  }, {
+    "source" : 4,
+    "target" : 8,
+    "shuffle" : {
+      "type" : "FORWARD"
+    },
+    "shuffleMode" : "PIPELINED"
+  }, {
+    "source" : 8,
+    "target" : 6,
+    "shuffle" : {
+      "type" : "FORWARD"
+    },
+    "shuffleMode" : "PIPELINED"
+  }, {
+    "source" : 6,
+    "target" : 7,
+    "shuffle" : {
+      "type" : "FORWARD"
+    },
+    "shuffleMode" : "PIPELINED"
+  } ]
+}
