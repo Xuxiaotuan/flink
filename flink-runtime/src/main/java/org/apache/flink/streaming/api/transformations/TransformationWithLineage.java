@@ -22,6 +22,7 @@ import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.streaming.api.lineage.LineageVertex;
+import org.apache.flink.streaming.api.lineage.LineageVertexProvider;
 import org.apache.flink.streaming.api.lineage.TransformationColumnLineage;
 
 import javax.annotation.Nullable;
@@ -75,6 +76,21 @@ public abstract class TransformationWithLineage<T> extends PhysicalTransformatio
     /** Change the lineage vertex of this {@code Transformation}. */
     public void setLineageVertex(LineageVertex lineageVertex) {
         this.lineageVertex = lineageVertex;
+    }
+
+    /** Reads optional connector metadata without failing the execution transformation. */
+    public void extractLineageVertex(Object provider) {
+        if (provider instanceof LineageVertexProvider) {
+            try {
+                setLineageVertex(((LineageVertexProvider) provider).getLineageVertex());
+            } catch (RuntimeException error) {
+                setLineageFailure(error.getClass().getSimpleName() + ": " + error.getMessage());
+                org.slf4j.LoggerFactory.getLogger(TransformationWithLineage.class)
+                        .warn(
+                                "Connector lineage observation failed; job execution continues.",
+                                error);
+            }
+        }
     }
 
     /** Returns complete column lineage when this is a Table/SQL sink transformation. */

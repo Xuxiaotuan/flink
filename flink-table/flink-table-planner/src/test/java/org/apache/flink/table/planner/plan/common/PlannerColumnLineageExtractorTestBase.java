@@ -54,6 +54,7 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -108,6 +109,76 @@ public abstract class PlannerColumnLineageExtractorTestBase extends TableTestBas
         assertThat(relation.getTransformations())
                 .containsExactly(PlannerColumnLineageTransformation.ALIAS);
         assertInputs(relation, "FirstTable.a:DIRECT");
+    }
+
+    @Test
+    void testWatermarkPreservesColumnValuesWithoutAddingWatermarkDependencies() {
+        util.addTableSource(
+                "WatermarkedTable",
+                Schema.newBuilder()
+                        .column("a", DataTypes.BIGINT())
+                        .column("ts", DataTypes.TIMESTAMP(3))
+                        .watermark("ts", "ts - INTERVAL '5' SECOND")
+                        .build());
+
+        final PlannerSinkColumnLineage lineage =
+                extract("sink-watermark", "SELECT a, ts FROM WatermarkedTable", "a", "ts");
+
+        assertInputs(relation(lineage, "a"), "WatermarkedTable.a:DIRECT");
+        assertInputs(relation(lineage, "ts"), "WatermarkedTable.ts:DIRECT");
+        assertThat(relation(lineage, "a").getTransformations()).isEmpty();
+        assertThat(relation(lineage, "ts").getTransformations()).isEmpty();
+    }
+
+    @Test
+    void testSelectsExactFieldFromProjectedRowConstructor() {
+        final RelNode input = toRelNode("SELECT a, b FROM FirstTable");
+        final RexNode row =
+                input.getCluster()
+                        .getRexBuilder()
+                        .makeCall(
+                                SqlStdOperatorTable.ROW,
+                                RexInputRef.of(0, input.getRowType()),
+                                RexInputRef.of(1, input.getRowType()));
+        final RelNode rowProject = project(input, row, "constructed_row");
+        final RexNode selectedField =
+                input.getCluster()
+                        .getRexBuilder()
+                        .makeFieldAccess(RexInputRef.of(0, rowProject.getRowType()), 0);
+
+        final PlannerSinkColumnLineage lineage =
+                PlannerColumnLineageExtractor.extract(
+                        "sink-row-field",
+                        Collections.singletonList("selected"),
+                        project(rowProject, selectedField, "selected"));
+
+        assertInputs(relation(lineage, "selected"), "FirstTable.a:DIRECT");
+        assertThat(relation(lineage, "selected").getOrigin())
+                .isEqualTo(PlannerColumnLineageOrigin.INPUT_FIELDS);
+        assertThat(relation(lineage, "selected").getTransformations())
+                .containsExactly(PlannerColumnLineageTransformation.EXPRESSION);
+    }
+
+    @Test
+    void testRejectsNestedSourceFieldWithoutNestedPathContract() {
+        util.addTableSource(
+                "NestedTable",
+                Schema.newBuilder()
+                        .column(
+                                "payload",
+                                DataTypes.ROW(
+                                        DataTypes.FIELD("id", DataTypes.BIGINT()),
+                                        DataTypes.FIELD("label", DataTypes.STRING())))
+                        .build());
+
+        assertThatThrownBy(
+                        () ->
+                                extract(
+                                        "sink-nested-source",
+                                        "SELECT n.payload.id FROM NestedTable n",
+                                        "id"))
+                .isInstanceOf(TableLineageExtractionException.class)
+                .hasMessageContaining("RexFieldAccess");
     }
 
     @Test

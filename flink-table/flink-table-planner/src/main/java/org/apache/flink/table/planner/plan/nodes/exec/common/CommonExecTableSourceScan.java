@@ -128,11 +128,10 @@ public abstract class CommonExecTableSourceScan extends ExecNodeBase<RowData>
                 tableSource.getScanRuntimeProvider(ScanRuntimeProviderContext.INSTANCE);
         final int sourceParallelism = deriveSourceParallelism(provider);
         final boolean sourceParallelismConfigured = isParallelismConfigured(provider);
-        Optional<LineageVertex> lineageVertex = Optional.empty();
+        Object lineageProvider = null;
         if (provider instanceof SourceFunctionProvider) {
             final SourceFunctionProvider sourceFunctionProvider = (SourceFunctionProvider) provider;
             final SourceFunction<RowData> function = sourceFunctionProvider.createSourceFunction();
-            lineageVertex = TableLineageUtils.extractLineageDataset(function);
             sourceTransform =
                     createSourceFunctionTransformation(
                             env,
@@ -143,19 +142,7 @@ public abstract class CommonExecTableSourceScan extends ExecNodeBase<RowData>
                             sourceParallelism,
                             sourceParallelismConfigured);
 
-            LineageDataset tableLineageDataset =
-                    TableLineageUtils.createTableLineageDataset(
-                            tableSourceSpec.getContextResolvedTable(), lineageVertex);
-
-            TableSourceLineageVertex sourceLineageVertex =
-                    new TableSourceLineageVertexImpl(
-                            Arrays.asList(tableLineageDataset),
-                            provider.isBounded()
-                                    ? Boundedness.BOUNDED
-                                    : Boundedness.CONTINUOUS_UNBOUNDED);
-
-            ((TransformationWithLineage<RowData>) sourceTransform)
-                    .setLineageVertex(sourceLineageVertex);
+            attachSourceLineage(sourceTransform, function, provider);
             if (function instanceof ParallelSourceFunction && sourceParallelismConfigured) {
                 metadata.fill(sourceTransform);
                 return new SourceTransformationWrapper<>(sourceTransform);
@@ -165,14 +152,14 @@ public abstract class CommonExecTableSourceScan extends ExecNodeBase<RowData>
         } else if (provider instanceof InputFormatProvider) {
             final InputFormat<RowData, ?> inputFormat =
                     ((InputFormatProvider) provider).createInputFormat();
-            lineageVertex = TableLineageUtils.extractLineageDataset(inputFormat);
+            lineageProvider = inputFormat;
             sourceTransform =
                     createInputFormatTransformation(
                             env, inputFormat, outputTypeInfo, metadata.getName());
             metadata.fill(sourceTransform);
         } else if (provider instanceof SourceProvider) {
             final Source<RowData, ?, ?> source = ((SourceProvider) provider).createSource();
-            lineageVertex = TableLineageUtils.extractLineageDataset(source);
+            lineageProvider = source;
             // TODO: Push down watermark strategy to source scan
             sourceTransform =
                     env.fromSource(
@@ -204,21 +191,7 @@ public abstract class CommonExecTableSourceScan extends ExecNodeBase<RowData>
                     provider.getClass().getSimpleName() + " is unsupported now.");
         }
 
-        LineageDataset tableLineageDataset =
-                TableLineageUtils.createTableLineageDataset(
-                        tableSourceSpec.getContextResolvedTable(), lineageVertex);
-
-        TableSourceLineageVertex sourceLineageVertex =
-                new TableSourceLineageVertexImpl(
-                        Arrays.asList(tableLineageDataset),
-                        provider.isBounded()
-                                ? Boundedness.BOUNDED
-                                : Boundedness.CONTINUOUS_UNBOUNDED);
-
-        if (sourceTransform instanceof TransformationWithLineage) {
-            ((TransformationWithLineage<RowData>) sourceTransform)
-                    .setLineageVertex(sourceLineageVertex);
-        }
+        attachSourceLineage(sourceTransform, lineageProvider, provider);
 
         if (sourceParallelismConfigured) {
             Transformation<RowData> sourceTransformationWrapper =
@@ -233,6 +206,33 @@ public abstract class CommonExecTableSourceScan extends ExecNodeBase<RowData>
         }
 
         return sourceTransform;
+    }
+
+    private void attachSourceLineage(
+            Transformation<RowData> transformation,
+            Object lineageProvider,
+            ScanTableSource.ScanRuntimeProvider provider) {
+        try {
+            Optional<LineageVertex> lineageVertex =
+                    TableLineageUtils.extractLineageDataset(lineageProvider);
+            LineageDataset dataset =
+                    TableLineageUtils.createTableLineageDataset(
+                            tableSourceSpec.getContextResolvedTable(), lineageVertex);
+            TableSourceLineageVertex vertex =
+                    new TableSourceLineageVertexImpl(
+                            Arrays.asList(dataset),
+                            provider.isBounded()
+                                    ? Boundedness.BOUNDED
+                                    : Boundedness.CONTINUOUS_UNBOUNDED);
+            if (transformation instanceof TransformationWithLineage) {
+                ((TransformationWithLineage<RowData>) transformation).setLineageVertex(vertex);
+            }
+        } catch (RuntimeException error) {
+            transformation.setLineageFailure(
+                    error.getClass().getSimpleName() + ": " + error.getMessage());
+            org.slf4j.LoggerFactory.getLogger(CommonExecTableSourceScan.class)
+                    .warn("Source lineage observation failed; job execution continues.", error);
+        }
     }
 
     private boolean isParallelismConfigured(ScanTableSource.ScanRuntimeProvider runtimeProvider) {

@@ -1686,7 +1686,35 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
                     listener ->
                             listener.onEvent(
                                     new DefaultJobExecutionStatusEvent(
-                                            getJobID(), getJobName(), oldState, newState, cause)));
+                                            getJobID(),
+                                            getJobName(),
+                                            oldState,
+                                            newState,
+                                            cause,
+                                            java.util.Map.of(
+                                                    DefaultJobExecutionStatusEvent
+                                                            .LINEAGE_TABLE_STATUS,
+                                                    jobInformation
+                                                            .getJobConfiguration()
+                                                            .getString(
+                                                                    DefaultJobExecutionStatusEvent
+                                                                            .LINEAGE_TABLE_STATUS,
+                                                                    "UNAVAILABLE"),
+                                                    DefaultJobExecutionStatusEvent
+                                                            .LINEAGE_COLUMN_STATUS,
+                                                    jobInformation
+                                                            .getJobConfiguration()
+                                                            .getString(
+                                                                    DefaultJobExecutionStatusEvent
+                                                                            .LINEAGE_COLUMN_STATUS,
+                                                                    "UNAVAILABLE"),
+                                                    DefaultJobExecutionStatusEvent.LINEAGE_ISSUES,
+                                                    jobInformation
+                                                            .getJobConfiguration()
+                                                            .getString(
+                                                                    DefaultJobExecutionStatusEvent
+                                                                            .LINEAGE_ISSUES,
+                                                                    "No lineage observation was transferred")))));
         }
     }
 

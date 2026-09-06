@@ -25,7 +25,6 @@ import org.apache.flink.api.connector.source.Boundedness;
 import org.apache.flink.api.connector.source.Source;
 import org.apache.flink.api.connector.source.SourceSplit;
 import org.apache.flink.api.dag.Transformation;
-import org.apache.flink.streaming.api.lineage.LineageVertexProvider;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
 
 import javax.annotation.Nullable;
@@ -123,8 +122,6 @@ public class SourceTransformation<OUT, SplitT extends SourceSplit, EnumChkT>
     }
 
     private void extractLineageVertex() {
-        if (source instanceof LineageVertexProvider) {
-            setLineageVertex(((LineageVertexProvider) source).getLineageVertex());
-        }
+        extractLineageVertex(source);
     }
 }

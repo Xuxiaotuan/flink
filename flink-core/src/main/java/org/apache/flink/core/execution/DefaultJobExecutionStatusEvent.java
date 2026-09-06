@@ -24,9 +24,16 @@ import org.apache.flink.api.common.JobStatus;
 
 import javax.annotation.Nullable;
 
+import java.util.Collections;
+import java.util.Map;
+
 /** Default implementation for {@link JobExecutionStatusEvent}. */
 @Internal
 public class DefaultJobExecutionStatusEvent implements JobExecutionStatusEvent {
+    public static final String LINEAGE_TABLE_STATUS = "internal.lineage.table-status";
+    public static final String LINEAGE_COLUMN_STATUS = "internal.lineage.column-status";
+    public static final String LINEAGE_ISSUES = "internal.lineage.issues";
+    private final Map<String, String> lineageStatus;
     private final JobID jobId;
     private final String jobName;
     private final JobStatus oldStatus;
@@ -39,11 +46,27 @@ public class DefaultJobExecutionStatusEvent implements JobExecutionStatusEvent {
             JobStatus oldStatus,
             JobStatus newStatus,
             @Nullable Throwable cause) {
+        this(jobId, jobName, oldStatus, newStatus, cause, Collections.emptyMap());
+    }
+
+    public DefaultJobExecutionStatusEvent(
+            JobID jobId,
+            String jobName,
+            JobStatus oldStatus,
+            JobStatus newStatus,
+            @Nullable Throwable cause,
+            Map<String, String> lineageStatus) {
         this.jobId = jobId;
         this.jobName = jobName;
         this.oldStatus = oldStatus;
         this.newStatus = newStatus;
         this.cause = cause;
+        this.lineageStatus = Map.copyOf(lineageStatus);
+    }
+
+    /** Optional observation metadata transferred with the job, unrelated to execution outcome. */
+    public Map<String, String> getLineageStatus() {
+        return lineageStatus;
     }
 
     @Override

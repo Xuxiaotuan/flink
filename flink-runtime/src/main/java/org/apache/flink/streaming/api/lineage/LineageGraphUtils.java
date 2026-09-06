@@ -42,13 +42,112 @@ public class LineageGraphUtils {
 
     /** Convert transforms to LineageGraph. */
     public static LineageGraph convertToLineageGraph(List<Transformation<?>> transformations) {
+        return convertToLineageGraph(transformations, true);
+    }
+
+    /** Captures known metadata and failures without vetoing execution. */
+    public static LineageGraphObservation observe(List<Transformation<?>> transformations) {
+        try {
+            final LineageGraph graph = convertToLineageGraph(transformations);
+            validateTableIdentities(graph);
+            final boolean completeColumns =
+                    !graph.columnRelations().isEmpty()
+                            && transformations.stream()
+                                    .allMatch(LineageGraphUtils::hasColumnMetadataForSink)
+                            && graph.sinks().stream()
+                                    .flatMap(sink -> sink.datasets().stream())
+                                    .allMatch(
+                                            dataset ->
+                                                    graph.columnRelations().stream()
+                                                            .anyMatch(
+                                                                    relation ->
+                                                                            relation.outputDataset()
+                                                                                            .namespace()
+                                                                                            .equals(
+                                                                                                    dataset
+                                                                                                            .namespace())
+                                                                                    && relation.outputDataset()
+                                                                                            .name()
+                                                                                            .equals(
+                                                                                                    dataset
+                                                                                                            .name())));
+            return new LineageGraphObservation(
+                    completeColumns ? graph : convertToLineageGraph(transformations, false),
+                    completeColumns ? "COMPLETE" : "PARTIAL",
+                    completeColumns ? "COMPLETE" : "UNAVAILABLE",
+                    !completeColumns
+                            ? java.util.Collections.singletonList(
+                                    "Not all output datasets have validated column lineage")
+                            : java.util.Collections.emptyList());
+        } catch (RuntimeException failure) {
+            final List<String> issues = new ArrayList<>();
+            issues.add(failure.getClass().getSimpleName() + ": " + failure.getMessage());
+            org.slf4j.LoggerFactory.getLogger(LineageGraphUtils.class)
+                    .warn("Lineage observation incomplete; job execution continues.", failure);
+            try {
+                final LineageGraph tables = convertToLineageGraph(transformations, false);
+                validateTableIdentities(tables);
+                return new LineageGraphObservation(tables, "PARTIAL", "UNAVAILABLE", issues);
+            } catch (RuntimeException tableFailure) {
+                issues.add(
+                        tableFailure.getClass().getSimpleName() + ": " + tableFailure.getMessage());
+                return new LineageGraphObservation(
+                        DefaultLineageGraph.builder().build(),
+                        "UNAVAILABLE",
+                        "UNAVAILABLE",
+                        issues);
+            }
+        }
+    }
+
+    private static boolean hasColumnMetadataForSink(Transformation<?> transformation) {
+        if (!(transformation instanceof TransformationWithLineage)) {
+            return true;
+        }
+        final TransformationWithLineage<?> carrier = (TransformationWithLineage<?>) transformation;
+        final TransformationColumnLineage columns = carrier.getColumnLineage();
+        final LineageVertex vertex = carrier.getLineageVertex();
+        final boolean sink =
+                transformation instanceof SinkTransformation
+                        || transformation instanceof LegacySinkTransformation
+                        || columns != null
+                        || (vertex != null && !(vertex instanceof SourceLineageVertex));
+        return !sink || (columns != null && !columns.getExpectedOutputFields().isEmpty());
+    }
+
+    private static void validateTableIdentities(LineageGraph graph) {
+        final List<LineageVertex> vertices = new ArrayList<>(graph.sources());
+        vertices.addAll(graph.sinks());
+        for (LineageVertex vertex : vertices) {
+            for (LineageDataset dataset : vertex.datasets()) {
+                if (dataset.namespace() == null
+                        || dataset.namespace().trim().isEmpty()
+                        || dataset.name() == null
+                        || dataset.name().trim().isEmpty()) {
+                    throw new IllegalArgumentException("Lineage dataset has no stable identity");
+                }
+            }
+        }
+    }
+
+    private static LineageGraph convertToLineageGraph(
+            List<Transformation<?>> transformations, boolean includeColumns) {
+        for (Transformation<?> root : transformations) {
+            for (Transformation<?> transformation : root.getTransitivePredecessors()) {
+                if (includeColumns && transformation.getLineageFailure() != null) {
+                    throw new IllegalStateException(
+                            "Lineage observation failed: " + transformation.getLineageFailure());
+                }
+            }
+        }
         DefaultLineageGraph.LineageGraphBuilder builder = DefaultLineageGraph.builder();
         List<ColumnLineageContribution> columnLineageContributions = new ArrayList<>();
 
         // find complete edges
         for (Transformation<?> transformation : transformations) {
             List<LineageEdge> edges =
-                    processSink(transformation, builder, columnLineageContributions);
+                    processSink(
+                            transformation, builder, columnLineageContributions, includeColumns);
             for (LineageEdge lineageEdge : edges) {
                 builder.addLineageEdge(lineageEdge);
             }
@@ -68,13 +167,14 @@ public class LineageGraphUtils {
     private static List<LineageEdge> processSink(
             Transformation<?> transformation,
             DefaultLineageGraph.LineageGraphBuilder builder,
-            List<ColumnLineageContribution> columnLineageContributions) {
+            List<ColumnLineageContribution> columnLineageContributions,
+            boolean includeColumns) {
         List<LineageEdge> lineageEdges = new ArrayList<>();
         LineageVertex sinkLineageVertex = null;
         TransformationColumnLineage columnLineage = null;
         if (transformation instanceof TransformationWithLineage) {
             TransformationWithLineage<?> carrier = (TransformationWithLineage<?>) transformation;
-            columnLineage = carrier.getColumnLineage();
+            columnLineage = includeColumns ? carrier.getColumnLineage() : null;
             if (columnLineage != null) {
                 sinkLineageVertex = validateColumnLineageSinkVertex(transformation, carrier);
             }

@@ -144,7 +144,7 @@ class ColumnLineagePropagationTest {
     }
 
     @Test
-    void testOldPlanWithoutPruningEvidenceRequiresRecompilation() throws Exception {
+    void testOldPlanWithoutPruningEvidenceExecutesWithoutLineage() throws Exception {
         final TableEnvironmentImpl environment = createEnvironment();
         final ObjectMapper mapper = new ObjectMapper();
         final JsonNode json =
@@ -155,9 +155,7 @@ class ColumnLineagePropagationTest {
         lineages.get(0).remove("prunedSources");
         final CompiledPlan restored =
                 environment.loadPlan(PlanReference.fromJsonString(mapper.writeValueAsString(json)));
-        assertThatThrownBy(() -> CompiledPlanUtils.toTransformations(environment, restored))
-                .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("recompile");
+        assertLineageUnavailable(environment, restored);
     }
 
     @Test
@@ -173,20 +171,14 @@ class ColumnLineagePropagationTest {
         final CompiledPlan missing =
                 environment.loadPlan(
                         PlanReference.fromJsonString(mapper.writeValueAsString(missingSnapshot)));
-        assertThatThrownBy(() -> CompiledPlanUtils.toTransformations(environment, missing))
-                .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("source identities")
-                .hasMessageContaining("LineageSource");
+        assertLineageUnavailable(environment, missing);
 
         final JsonNode unknownField = mapper.readTree(plan);
         assertThat(replaceFirstInputField(unknownField, "does_not_exist")).isEqualTo(1);
         final CompiledPlan invalidField =
                 environment.loadPlan(
                         PlanReference.fromJsonString(mapper.writeValueAsString(unknownField)));
-        assertThatThrownBy(() -> CompiledPlanUtils.toTransformations(environment, invalidField))
-                .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("source schema")
-                .hasMessageContaining("does_not_exist");
+        assertLineageUnavailable(environment, invalidField);
     }
 
     @Test
@@ -207,9 +199,7 @@ class ColumnLineagePropagationTest {
         liveLineages.get(0).set("prunedSources", prunedLineages.get(0).get("prunedSources"));
         final CompiledPlan restored =
                 environment.loadPlan(PlanReference.fromJsonString(mapper.writeValueAsString(live)));
-        assertThatThrownBy(() -> CompiledPlanUtils.toTransformations(environment, restored))
-                .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("conflicting pruned source identities");
+        assertLineageUnavailable(environment, restored);
     }
 
     @Test
@@ -245,10 +235,8 @@ class ColumnLineagePropagationTest {
                 .set(
                         TableConfigOptions.PLAN_COMPILE_CATALOG_OBJECTS,
                         TableConfigOptions.CatalogPlanCompilation.IDENTIFIER);
-        assertThatThrownBy(() -> environment.compilePlanSql(INSERT_SQL + " WHERE 1=0"))
-                .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("catalog-objects=ALL")
-                .hasMessageContaining("recompile");
+        assertThat(environment.compilePlanSql(INSERT_SQL + " WHERE 1=0").asJsonString())
+                .doesNotContain("\"columnLineage\"");
     }
 
     @Test
@@ -499,7 +487,7 @@ class ColumnLineagePropagationTest {
     }
 
     @Test
-    void testCompiledPlanWithoutColumnLineageIsRejected() throws Exception {
+    void testCompiledPlanWithoutColumnLineageStillTranslates() throws Exception {
         final TableEnvironmentImpl environment = createEnvironment();
         final CompiledPlan compiledPlan = environment.compilePlanSql(INSERT_SQL);
         final ObjectMapper objectMapper = new ObjectMapper();
@@ -510,15 +498,11 @@ class ColumnLineagePropagationTest {
                 environment.loadPlan(
                         PlanReference.fromJsonString(objectMapper.writeValueAsString(planJson)));
 
-        assertThatThrownBy(() -> CompiledPlanUtils.toTransformations(environment, legacyPlan))
-                .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("LineageSink")
-                .hasMessageContaining("field '<unknown>'")
-                .hasMessageContaining("compiled plan does not contain complete column lineage");
+        assertLineageUnavailable(environment, legacyPlan);
     }
 
     @Test
-    void testCompiledPlanWithEmptyColumnLineageIsRejectedAtTranslation() throws Exception {
+    void testEmptyColumnLineageDoesNotPreventTranslation() throws Exception {
         final TableEnvironmentImpl environment = createEnvironment();
         final ObjectMapper objectMapper = new ObjectMapper();
         final JsonNode planJson =
@@ -528,15 +512,11 @@ class ColumnLineagePropagationTest {
                 environment.loadPlan(
                         PlanReference.fromJsonString(objectMapper.writeValueAsString(planJson)));
 
-        assertThatThrownBy(() -> CompiledPlanUtils.toTransformations(environment, tampered))
-                .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("LineageSink")
-                .hasMessageContaining("field '<unknown>'")
-                .hasMessageContaining("expected output fields");
+        assertLineageUnavailable(environment, tampered);
     }
 
     @Test
-    void testCompiledPlanWithSwappedSinkKeyIsRejectedAtTranslation() throws Exception {
+    void testSwappedSinkKeyWithholdsLineageOnly() throws Exception {
         final TableEnvironmentImpl environment = createEnvironment();
         final ObjectMapper objectMapper = new ObjectMapper();
         final JsonNode planJson =
@@ -547,15 +527,11 @@ class ColumnLineagePropagationTest {
                 environment.loadPlan(
                         PlanReference.fromJsonString(objectMapper.writeValueAsString(planJson)));
 
-        assertThatThrownBy(() -> CompiledPlanUtils.toTransformations(environment, tampered))
-                .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("LineageSink")
-                .hasMessageContaining("field '<unknown>'")
-                .hasMessageContaining("sink key");
+        assertLineageUnavailable(environment, tampered);
     }
 
     @Test
-    void testCompiledPlanWithTwoSinkKeysSwappedIsRejectedAtTranslation() throws Exception {
+    void testTwoSwappedSinkKeysWithholdLineageOnly() throws Exception {
         final TableEnvironmentImpl environment = createEnvironment();
         environment.createTemporaryTable(
                 "SecondLineageSink",
@@ -579,13 +555,11 @@ class ColumnLineagePropagationTest {
                 environment.loadPlan(
                         PlanReference.fromJsonString(objectMapper.writeValueAsString(planJson)));
 
-        assertThatThrownBy(() -> CompiledPlanUtils.toTransformations(environment, tampered))
-                .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("sink key");
+        assertLineageUnavailable(environment, tampered);
     }
 
     @Test
-    void testCompiledPlanWithUnknownInputFieldIsRejectedAtTranslation() throws Exception {
+    void testUnknownInputFieldWithholdsLineageOnly() throws Exception {
         final TableEnvironmentImpl environment = createEnvironment();
         final ObjectMapper objectMapper = new ObjectMapper();
         final JsonNode planJson =
@@ -595,15 +569,11 @@ class ColumnLineagePropagationTest {
                 environment.loadPlan(
                         PlanReference.fromJsonString(objectMapper.writeValueAsString(planJson)));
 
-        assertThatThrownBy(() -> CompiledPlanUtils.toTransformations(environment, tampered))
-                .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("LineageSink")
-                .hasMessageContaining("does_not_exist")
-                .hasMessageContaining("source schema");
+        assertLineageUnavailable(environment, tampered);
     }
 
     @Test
-    void testCompiledPlanWithMissingRuntimeSourceIsRejectedAtTranslation() throws Exception {
+    void testMissingRuntimeSourceWithholdsLineageOnly() throws Exception {
         final TableEnvironmentImpl environment = createEnvironment();
         final ObjectMapper objectMapper = new ObjectMapper();
         final JsonNode planJson =
@@ -613,11 +583,7 @@ class ColumnLineagePropagationTest {
                 environment.loadPlan(
                         PlanReference.fromJsonString(objectMapper.writeValueAsString(planJson)));
 
-        assertThatThrownBy(() -> CompiledPlanUtils.toTransformations(environment, tampered))
-                .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("LineageSink")
-                .hasMessageContaining("source identities")
-                .hasMessageContaining("MissingSource");
+        assertLineageUnavailable(environment, tampered);
     }
 
     @Test
@@ -688,10 +654,7 @@ class ColumnLineagePropagationTest {
                         "INSERT INTO CustomTransformationSink "
                                 + "SELECT `value` FROM LineageSource");
 
-        assertThatThrownBy(() -> CompiledPlanUtils.toTransformations(environment, compiledPlan))
-                .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("CustomTransformationSink")
-                .hasMessageContaining("cannot carry table column lineage");
+        assertLineageUnavailable(environment, compiledPlan);
     }
 
     @Test
@@ -702,19 +665,16 @@ class ColumnLineagePropagationTest {
     }
 
     @Test
-    void testAnonymousTableSinkIsRejected() {
+    void testAnonymousTableSinkStillCompilesWithoutLineage() {
         final TableEnvironmentImpl environment = createEnvironment();
 
-        assertThatThrownBy(
-                        () ->
-                                environment
-                                        .from("LineageSource")
-                                        .insertInto(
-                                                TableDescriptor.forConnector("blackhole").build())
-                                        .compilePlan())
-                .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("field '<unknown>'")
-                .hasMessageContaining("anonymous Table sink has no stable dataset identity");
+        assertThat(
+                        environment
+                                .from("LineageSource")
+                                .insertInto(TableDescriptor.forConnector("blackhole").build())
+                                .compilePlan()
+                                .asJsonString())
+                .doesNotContain("\"columnLineage\"");
     }
 
     @Test
@@ -748,6 +708,16 @@ class ColumnLineagePropagationTest {
                 .hasMessageContaining(operation.getClass().getName())
                 .hasMessageContaining(unsupportedRoot.getClass().getName())
                 .hasMessageContaining("field '<unknown>'");
+    }
+
+    private static void assertLineageUnavailable(
+            TableEnvironmentImpl environment, CompiledPlan plan) {
+        final List<Transformation<?>> transformations =
+                CompiledPlanUtils.toTransformations(environment, plan);
+        assertThat(transformations).isNotEmpty();
+        assertThatThrownBy(() -> LineageGraphUtils.convertToLineageGraph(transformations))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Lineage");
     }
 
     private static TableEnvironmentImpl createEnvironment() {
@@ -887,7 +857,7 @@ class ColumnLineagePropagationTest {
         assertThat(compiledInput.dependencyType()).isEqualTo(directInput.dependencyType());
     }
 
-    /** Custom provider whose non-carrier result must be rejected instead of losing lineage. */
+    /** Custom provider whose non-carrier result makes lineage unavailable, not execution. */
     public static final class InputPassthroughTransformationTableSink implements DynamicTableSink {
 
         @Override

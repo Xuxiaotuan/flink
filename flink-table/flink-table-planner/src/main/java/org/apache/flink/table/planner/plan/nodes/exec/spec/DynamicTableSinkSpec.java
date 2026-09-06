@@ -74,7 +74,13 @@ public class DynamicTableSinkSpec extends DynamicTableSpecBase {
             @JsonProperty(FIELD_NAME_CATALOG_TABLE) ContextResolvedTable contextResolvedTable,
             @Nullable @JsonProperty(FIELD_NAME_SINK_ABILITIES) List<SinkAbilitySpec> sinkAbilities,
             @Nullable @JsonProperty(FIELD_NAME_TARGET_COLUMNS) int[][] targetColumns,
-            @Nullable @JsonProperty(FIELD_NAME_COLUMN_LINEAGE)
+            @Nullable
+                    @JsonProperty(FIELD_NAME_COLUMN_LINEAGE)
+                    @org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation
+                            .JsonDeserialize(
+                            using =
+                                    org.apache.flink.table.planner.lineage
+                                            .OptionalColumnLineageDeserializer.class)
                     PlannerSinkColumnLineage columnLineage) {
         this.contextResolvedTable = contextResolvedTable;
         this.sinkAbilities = sinkAbilities;
@@ -137,8 +143,8 @@ public class DynamicTableSinkSpec extends DynamicTableSpecBase {
         return columnLineage;
     }
 
-    public void setColumnLineage(PlannerSinkColumnLineage columnLineage) {
-        this.columnLineage = Objects.requireNonNull(columnLineage);
+    public void setColumnLineage(@Nullable PlannerSinkColumnLineage columnLineage) {
+        this.columnLineage = columnLineage;
     }
 
     @Override

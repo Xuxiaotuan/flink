@@ -184,10 +184,7 @@ public abstract class CommonExecSink extends ExecNodeBase<Object>
                                 isBounded, tableSinkSpec.getTargetColumns()));
         final RowType persistedRowType = getPersistedRowType(schema, tableSink);
         final boolean requiresColumnLineage = requiresColumnLineage(tableSink);
-        if (tableSinkSpec.getContextResolvedTable().isAnonymous() && requiresColumnLineage) {
-            throw lineageFailure(
-                    "<unknown>", "anonymous Table sink has no stable dataset identity");
-        }
+
         final int[] primaryKeys = getPrimaryKeyIndices(persistedRowType, schema);
         final int sinkParallelism = deriveSinkParallelism(inputTransform, runtimeProvider);
         sinkParallelismConfigured = isParallelismConfigured(runtimeProvider);
@@ -218,9 +215,6 @@ public abstract class CommonExecSink extends ExecNodeBase<Object>
         } else if (runtimeProvider instanceof SinkV2Provider) {
             outputObject = ((SinkV2Provider) runtimeProvider).createSink();
         }
-
-        Optional<LineageVertex> lineageVertexOpt =
-                TableLineageUtils.extractLineageDataset(outputObject);
 
         // only add materialization if input has changes, unless the conflict strategy has to
         // compare every insert against the row stored under the same primary key
@@ -264,15 +258,6 @@ public abstract class CommonExecSink extends ExecNodeBase<Object>
             sinkTransform = applyRowKindSetter(sinkTransform, targetRowKind.get(), config);
         }
 
-        LineageDataset tableLineageDataset =
-                TableLineageUtils.createTableLineageDataset(
-                        tableSinkSpec.getContextResolvedTable(), lineageVertexOpt);
-
-        TableSinkLineageVertex sinkLineageVertex =
-                new TableSinkLineageVertexImpl(
-                        Arrays.asList(tableLineageDataset),
-                        TableLineageUtils.convert(inputChangelogMode));
-
         Transformation transformation =
                 (Transformation<Object>)
                         applySinkProvider(
@@ -284,20 +269,45 @@ public abstract class CommonExecSink extends ExecNodeBase<Object>
                                 config,
                                 classLoader);
 
-        if (transformation instanceof TransformationWithLineage) {
-            final TransformationWithLineage<Object> lineageTransformation =
-                    (TransformationWithLineage<Object>) transformation;
-            lineageTransformation.setLineageVertex(sinkLineageVertex);
-            if (requiresColumnLineage) {
-                lineageTransformation.setColumnLineage(
-                        createColumnLineage(inputTransform, tableSink, tableLineageDataset));
+        try {
+            Optional<LineageVertex> lineageVertexOpt =
+                    TableLineageUtils.extractLineageDataset(outputObject);
+            LineageDataset tableLineageDataset =
+                    TableLineageUtils.createTableLineageDataset(
+                            tableSinkSpec.getContextResolvedTable(), lineageVertexOpt);
+
+            TableSinkLineageVertex sinkLineageVertex =
+                    new TableSinkLineageVertexImpl(
+                            Arrays.asList(tableLineageDataset),
+                            TableLineageUtils.convert(inputChangelogMode));
+
+            if (transformation instanceof TransformationWithLineage) {
+                final TransformationWithLineage<Object> lineageTransformation =
+                        (TransformationWithLineage<Object>) transformation;
+                lineageTransformation.setLineageVertex(sinkLineageVertex);
+                if (requiresColumnLineage) {
+                    lineageTransformation.setColumnLineage(
+                            createColumnLineage(inputTransform, tableSink, tableLineageDataset));
+                }
+            } else if (requiresColumnLineage) {
+                throw lineageFailure(
+                        "<unknown>",
+                        "sink runtime provider '"
+                                + runtimeProvider.getClass().getName()
+                                + "' cannot carry table column lineage");
             }
-        } else if (requiresColumnLineage) {
-            throw lineageFailure(
-                    "<unknown>",
-                    "sink runtime provider '"
-                            + runtimeProvider.getClass().getName()
-                            + "' cannot carry table column lineage");
+
+        } catch (RuntimeException error) {
+            transformation.setLineageFailure(
+                    error.getClass().getSimpleName() + ": " + error.getMessage());
+            org.slf4j.LoggerFactory.getLogger(CommonExecSink.class)
+                    .warn(
+                            "Column lineage unavailable for sink {}; job execution continues.",
+                            tableSinkSpec
+                                    .getContextResolvedTable()
+                                    .getIdentifier()
+                                    .asSummaryString(),
+                            error);
         }
         return transformation;
     }

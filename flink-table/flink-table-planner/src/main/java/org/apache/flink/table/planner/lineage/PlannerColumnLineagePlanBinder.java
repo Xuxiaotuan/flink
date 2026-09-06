@@ -56,6 +56,48 @@ import java.util.Set;
 /** Extracts logical column lineage and binds it to processed sink execution nodes. */
 @Internal
 public final class PlannerColumnLineagePlanBinder {
+    private static final org.slf4j.Logger LOG =
+            org.slf4j.LoggerFactory.getLogger(PlannerColumnLineagePlanBinder.class);
+    private String failureReason;
+
+    /** Creates a best-effort observer; extraction failures cannot veto optimization. */
+    public static PlannerColumnLineagePlanBinder observe(List<RelNode> roots, List<?> operations) {
+        try {
+            return new PlannerColumnLineagePlanBinder(extract(roots, operations), roots);
+        } catch (RuntimeException e) {
+            PlannerColumnLineagePlanBinder observer =
+                    new PlannerColumnLineagePlanBinder(
+                            Collections.emptyList(), Collections.emptyList());
+            observer.fail(e);
+            return observer;
+        }
+    }
+
+    private void fail(RuntimeException error) {
+        failureReason = error.getClass().getSimpleName() + ": " + error.getMessage();
+        physicalLineages.clear();
+        optimizedLineages = null;
+        LOG.warn("Column lineage observation failed; job execution will continue.", error);
+    }
+
+    private void observe(Runnable action) {
+        if (failureReason != null) {
+            return;
+        }
+        try {
+            action.run();
+        } catch (RuntimeException error) {
+            fail(error);
+        }
+    }
+
+    /** Prevents publication of a partial job graph after an observer callback failed. */
+    public void markFailedTransformations(
+            List<? extends org.apache.flink.api.dag.Transformation<?>> transformations) {
+        if (failureReason != null) {
+            transformations.forEach(t -> t.setLineageFailure(failureReason));
+        }
+    }
 
     private final List<PlannerSinkColumnLineage> logicalLineages;
     private final Map<RelNode, PlannerSinkColumnLineage> physicalLineages = new IdentityHashMap<>();
@@ -76,6 +118,10 @@ public final class PlannerColumnLineagePlanBinder {
 
     /** Binds roots before source and sink reuse can copy or merge them. */
     public void bindPhysicalRoots(List<RelNode> roots) {
+        observe(() -> bindPhysicalRootsChecked(roots));
+    }
+
+    private void bindPhysicalRootsChecked(List<RelNode> roots) {
         final Map<String, Deque<PlannerSinkColumnLineage>> bySink = new LinkedHashMap<>();
         for (PlannerSinkColumnLineage lineage : logicalLineages) {
             bySink.computeIfAbsent(lineage.getSinkKey(), ignored -> new ArrayDeque<>())
@@ -103,6 +149,10 @@ public final class PlannerColumnLineagePlanBinder {
 
     /** Transfers metadata across root-preserving copies without changing their digests. */
     public void transferRoots(List<RelNode> before, List<RelNode> after) {
+        observe(() -> transferRootsChecked(before, after));
+    }
+
+    private void transferRootsChecked(List<RelNode> before, List<RelNode> after) {
         if (before.size() != after.size()) {
             throw failure("<unknown>", "<unknown>", "root copies changed the number of sinks");
         }
@@ -119,6 +169,10 @@ public final class PlannerColumnLineagePlanBinder {
 
     /** Called with the exact group selected by the existing SinkReuser. */
     public void reuseSinks(List<Sink> sinks) {
+        observe(() -> reuseSinksChecked(sinks));
+    }
+
+    private void reuseSinksChecked(List<Sink> sinks) {
         final List<PlannerSinkColumnLineage> contributions = new ArrayList<>();
         for (Sink sink : sinks) {
             final PlannerSinkColumnLineage lineage = physicalLineages.get(sink);
@@ -137,6 +191,10 @@ public final class PlannerColumnLineagePlanBinder {
     }
 
     public void finishRoots(List<RelNode> roots) {
+        observe(() -> finishRootsChecked(roots));
+    }
+
+    private void finishRootsChecked(List<RelNode> roots) {
         optimizedLineages = new ArrayList<>();
         for (RelNode root : roots) {
             final PlannerSinkColumnLineage lineage = physicalLineages.get(root);
@@ -371,6 +429,18 @@ public final class PlannerColumnLineagePlanBinder {
     }
 
     public ExecNodeGraph bind(ExecNodeGraph execNodeGraph) {
+        observe(() -> bindChecked(execNodeGraph));
+        if (failureReason != null) {
+            for (ExecNode<?> root : execNodeGraph.getRootNodes()) {
+                if (root instanceof CommonExecSink) {
+                    ((CommonExecSink) root).getTableSinkSpec().setColumnLineage(null);
+                }
+            }
+        }
+        return execNodeGraph;
+    }
+
+    private ExecNodeGraph bindChecked(ExecNodeGraph execNodeGraph) {
         if (optimizedLineages == null
                 || optimizedLineages.size() != execNodeGraph.getRootNodes().size()) {
             throw failure(

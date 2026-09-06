@@ -20,6 +20,7 @@ package org.apache.flink.table.planner.lineage;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.table.catalog.ContextResolvedTable;
+import org.apache.flink.table.planner.plan.nodes.calcite.WatermarkAssigner;
 import org.apache.flink.table.planner.plan.schema.TableSourceTable;
 import org.apache.flink.table.planner.plan.utils.ExpandTableScanShuttle;
 
@@ -138,6 +139,10 @@ public final class PlannerColumnLineageExtractor {
         }
         if (relNode instanceof Values) {
             return constantFields(relNode);
+        }
+        if (relNode instanceof WatermarkAssigner) {
+            // Watermarks change time attributes, but neither column values nor row membership.
+            return extractNode(((WatermarkAssigner) relNode).getInput());
         }
         throw unsupported(relNode);
     }
@@ -451,6 +456,18 @@ public final class PlannerColumnLineageExtractor {
             if (call.getKind() == SqlKind.CASE) {
                 return visitCase(call);
             }
+            if (call.getKind() == SqlKind.ROW) {
+                final FieldLineage field = new FieldLineage();
+                final List<FieldLineage> nestedFields = new ArrayList<>();
+                for (RexNode operand : call.getOperands()) {
+                    final FieldLineage nested = operand.accept(this);
+                    nestedFields.add(nested);
+                    field.merge(nested);
+                }
+                field.nestedFields = nestedFields;
+                field.transformations.add(PlannerColumnLineageTransformation.EXPRESSION);
+                return field;
+            }
             final FieldLineage field =
                     call.getOperands().isEmpty() ? FieldLineage.system() : new FieldLineage();
             for (RexNode operand : call.getOperands()) {
@@ -514,7 +531,15 @@ public final class PlannerColumnLineageExtractor {
 
         @Override
         public FieldLineage visitFieldAccess(RexFieldAccess fieldAccess) {
-            throw unsupported(fieldAccess);
+            final FieldLineage reference = fieldAccess.getReferenceExpr().accept(this);
+            if (reference.nestedFields == null) {
+                // Only explicit ROW constructors expose exact per-field dependencies here.
+                throw unsupported(fieldAccess);
+            }
+            final FieldLineage field =
+                    reference.nestedFields.get(fieldAccess.getField().getIndex()).copy();
+            field.transformations.add(PlannerColumnLineageTransformation.EXPRESSION);
+            return field;
         }
 
         @Override
@@ -661,6 +686,7 @@ public final class PlannerColumnLineageExtractor {
         private final Set<PlannerColumnLineageTransformation> transformations =
                 new LinkedHashSet<>();
         private PlannerColumnLineageOrigin origin = PlannerColumnLineageOrigin.CONSTANT;
+        private List<FieldLineage> nestedFields;
 
         private static FieldLineage input(PlannerColumnLineageInput input) {
             final FieldLineage lineage = new FieldLineage();
@@ -684,6 +710,7 @@ public final class PlannerColumnLineageExtractor {
             copy.origin = origin;
             addInputs(copy.inputs, inputs);
             copy.transformations.addAll(transformations);
+            copy.nestedFields = nestedFields == null ? null : copyFields(nestedFields);
             return copy;
         }
 

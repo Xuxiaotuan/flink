@@ -44,6 +44,91 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Testing for lineage graph util. */
 class LineageGraphUtilsTest {
+    @Test
+    void sameDatasetWritersRequireColumnMetadataForEveryWriter() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSource<Long> source =
+                env.fromSource(
+                        new LineageSource(1L, 5L), WatermarkStrategy.noWatermarks(), "source");
+        DataStreamSink<Long> annotated = source.sinkTo(new LineageSink());
+        DataStreamSink<Long> unannotated = source.sinkTo(new LineageSink());
+        setColumnLineage(
+                annotated,
+                relation(
+                        dataset(SOURCE_DATASET_NAME, SOURCE_DATASET_NAMESPACE),
+                        "value",
+                        ColumnLineageDependencyType.DIRECT,
+                        dataset(SINK_DATASET_NAME, SINK_DATASET_NAMESPACE),
+                        "result",
+                        ColumnLineageOrigin.INPUT_FIELDS,
+                        null));
+
+        LineageGraphObservation observation =
+                LineageGraphUtils.observe(
+                        List.of(annotated.getTransformation(), unannotated.getTransformation()));
+
+        assertThat(observation.getTableStatus()).isEqualTo("PARTIAL");
+        assertThat(observation.getColumnStatus()).isEqualTo("UNAVAILABLE");
+        assertThat(observation.columnRelations()).isEmpty();
+        assertThat(observation.relations()).hasSize(2);
+        assertThat(observation.getIssues()).isNotEmpty();
+    }
+
+    @Test
+    void failedColumnObservationRetainsKnownTableRelations() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSink<Long> sink =
+                env.fromSource(
+                                new LineageSource(1L, 5L),
+                                WatermarkStrategy.noWatermarks(),
+                                "source")
+                        .sinkTo(new LineageSink());
+        sink.getTransformation().setLineageFailure("Unsupported field expression");
+        LineageGraph graph = env.getStreamGraph().getLineageGraph();
+        assertThat(graph).isNotNull();
+        assertThat(graph.relations()).hasSize(1);
+        assertThat(graph.columnRelations()).isEmpty();
+        assertThat(((LineageGraphObservation) graph).getTableStatus()).isEqualTo("PARTIAL");
+        assertThat(((LineageGraphObservation) graph).getColumnStatus()).isEqualTo("UNAVAILABLE");
+        assertThat(((LineageGraphObservation) graph).getIssues()).isNotEmpty();
+    }
+
+    @Test
+    void sourceLineageCallbackFailureDoesNotPreventGraphCreation() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.fromSource(
+                        new LineageSource(1L, 5L) {
+                            @Override
+                            public LineageVertex getLineageVertex() {
+                                throw new IllegalStateException("lineage callback failed");
+                            }
+                        },
+                        WatermarkStrategy.noWatermarks(),
+                        "source")
+                .sinkTo(new DiscardingSink<>());
+        LineageGraphObservation observation =
+                (LineageGraphObservation) env.getStreamGraph().getLineageGraph();
+        assertThat(observation.getColumnStatus()).isEqualTo("UNAVAILABLE");
+        assertThat(observation.getIssues()).isNotEmpty();
+    }
+
+    @Test
+    void sinkLineageCallbackFailureDoesNotPreventGraphCreation() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.fromSource(new NumberSequenceSource(1L, 5L), WatermarkStrategy.noWatermarks(), "source")
+                .sinkTo(
+                        new LineageSink() {
+                            @Override
+                            public LineageVertex getLineageVertex() {
+                                throw new IllegalStateException("lineage callback failed");
+                            }
+                        });
+        LineageGraphObservation observation =
+                (LineageGraphObservation) env.getStreamGraph().getLineageGraph();
+        assertThat(observation.getColumnStatus()).isEqualTo("UNAVAILABLE");
+        assertThat(observation.getIssues()).isNotEmpty();
+    }
+
     private static final String SOURCE_DATASET_NAME = "LineageSource";
     private static final String SOURCE_DATASET_NAMESPACE = "source://LineageSource";
     private static final String SINK_DATASET_NAME = "LineageSink";
