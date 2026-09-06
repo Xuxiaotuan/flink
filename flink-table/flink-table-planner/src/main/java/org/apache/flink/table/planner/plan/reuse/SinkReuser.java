@@ -18,6 +18,7 @@
 
 package org.apache.flink.table.planner.plan.reuse;
 
+import org.apache.flink.table.catalog.ObjectIdentifier;
 import org.apache.flink.table.planner.lineage.PlannerColumnLineagePlanBinder;
 import org.apache.flink.table.planner.plan.abilities.sink.SinkAbilitySpec;
 import org.apache.flink.table.planner.plan.nodes.calcite.Sink;
@@ -187,7 +188,6 @@ public class SinkReuser {
 
     private String getDigest(Sink sink) {
         List<String> digest = new ArrayList<>();
-        digest.add(sink.contextResolvedTable().getIdentifier().asSerializableString());
 
         int[][] targetColumns = sink.targetColumns();
         if (targetColumns != null && targetColumns.length > 0) {
@@ -224,8 +224,11 @@ public class SinkReuser {
 
         private final String digest;
 
+        private final ObjectIdentifier identifier;
+
         ReusableSinkGroup(Sink sink) {
             this.originalSinks.add(sink);
+            this.identifier = sink.contextResolvedTable().getIdentifier();
             this.inputTraitSet = sink.getInput().getTraitSet();
             this.digest = getDigest(sink);
             this.sinkAbilitySpecs = sink.abilitySpecs();
@@ -236,8 +239,9 @@ public class SinkReuser {
             SinkAbilitySpec[] currentSinkSpecs = sinkNode.abilitySpecs();
             RelTraitSet currentInputTraitSet = sinkNode.getInput().getTraitSet();
 
-            // Only table sink with the same digest, specs and input trait set can be reused
-            return this.digest.equals(currentSinkDigest)
+            // Only sinks with the same identifier, digest, specs and input traits can be reused.
+            return this.identifier.equals(sinkNode.contextResolvedTable().getIdentifier())
+                    && this.digest.equals(currentSinkDigest)
                     && Arrays.equals(this.sinkAbilitySpecs, currentSinkSpecs)
                     && this.inputTraitSet.equals(currentInputTraitSet);
         }
