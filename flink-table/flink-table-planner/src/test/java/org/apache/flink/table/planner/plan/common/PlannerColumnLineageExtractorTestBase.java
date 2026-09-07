@@ -41,10 +41,12 @@ import org.apache.calcite.plan.hep.HepPlanner;
 import org.apache.calcite.plan.hep.HepProgramBuilder;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.CorrelationId;
+import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.Spool;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.core.Window;
+import org.apache.calcite.rel.logical.LogicalJoin;
 import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rel.logical.LogicalRepeatUnion;
 import org.apache.calcite.rel.logical.LogicalTableScan;
@@ -738,19 +740,107 @@ public abstract class PlannerColumnLineageExtractorTestBase extends TableTestBas
     }
 
     @Test
-    void testRejectsUnsupportedRelNode() {
-        final RelNode relNode =
-                toRelNode("SELECT a FROM FirstTable INTERSECT SELECT a FROM SecondTable");
+    void testSetOperationsSeparateValuesFromWholeRowMembership() {
+        for (String operator :
+                new String[] {"INTERSECT", "INTERSECT ALL", "EXCEPT", "EXCEPT ALL"}) {
+            final PlannerSinkColumnLineage lineage =
+                    extract(
+                            "sink-set",
+                            "SELECT a, b FROM FirstTable "
+                                    + operator
+                                    + " SELECT a, b FROM SecondTable",
+                            "a",
+                            "b");
+            final boolean intersection = operator.startsWith("INTERSECT");
+            final List<String> expected =
+                    new java.util.ArrayList<>(
+                            Arrays.asList(
+                                    "FirstTable.a:DIRECT",
+                                    "FirstTable.a:INDIRECT",
+                                    "FirstTable.b:INDIRECT",
+                                    "SecondTable.a:INDIRECT",
+                                    "SecondTable.b:INDIRECT"));
+            if (intersection) {
+                expected.add("SecondTable.a:DIRECT");
+            }
+            assertInputs(relation(lineage, "a"), expected.toArray(new String[0]));
+            final List<String> other =
+                    new java.util.ArrayList<>(
+                            Arrays.asList(
+                                    "FirstTable.b:DIRECT",
+                                    "FirstTable.a:INDIRECT",
+                                    "FirstTable.b:INDIRECT",
+                                    "SecondTable.a:INDIRECT",
+                                    "SecondTable.b:INDIRECT"));
+            if (intersection) {
+                other.add("SecondTable.b:DIRECT");
+            }
+            assertInputs(relation(lineage, "b"), other.toArray(new String[0]));
+            assertThat(lineage.getExpectedSources()).hasSize(2);
+        }
+    }
 
+    @Test
+    void testSemiAndAntiJoinOnlyReturnLeftValues() {
+        for (JoinRelType type : new JoinRelType[] {JoinRelType.SEMI, JoinRelType.ANTI}) {
+            final RelNode left = toRelNode("SELECT a, b FROM FirstTable");
+            final RelNode right = toRelNode("SELECT a, b FROM SecondTable WHERE b > 0");
+            final RexNode condition =
+                    left.getCluster()
+                            .getRexBuilder()
+                            .makeCall(
+                                    SqlStdOperatorTable.EQUALS,
+                                    new RexInputRef(
+                                            0, left.getRowType().getFieldList().get(0).getType()),
+                                    new RexInputRef(
+                                            2, right.getRowType().getFieldList().get(0).getType()));
+            final RelNode join =
+                    LogicalJoin.create(
+                            left,
+                            right,
+                            Collections.emptyList(),
+                            condition,
+                            Collections.emptySet(),
+                            type);
+            final PlannerSinkColumnLineage lineage =
+                    PlannerColumnLineageExtractor.extract(
+                            "sink-join", Arrays.asList("a", "b"), join);
+            assertInputs(
+                    relation(lineage, "a"),
+                    "FirstTable.a:DIRECT",
+                    "FirstTable.a:INDIRECT",
+                    "SecondTable.a:INDIRECT",
+                    "SecondTable.b:INDIRECT");
+            assertInputs(
+                    relation(lineage, "b"),
+                    "FirstTable.b:DIRECT",
+                    "FirstTable.a:INDIRECT",
+                    "SecondTable.a:INDIRECT",
+                    "SecondTable.b:INDIRECT");
+            assertThat(lineage.getExpectedSources()).hasSize(2);
+        }
+    }
+
+    @Test
+    void testIntersectionDoesNotReuseOnlyLeftNestedFieldMetadata() {
+        final RelNode intersect =
+                toRelNode(
+                        "SELECT ROW(a, b) AS r FROM FirstTable INTERSECT SELECT ROW(d, b) AS r FROM SecondTable");
+        final RexNode member =
+                intersect
+                        .getCluster()
+                        .getRexBuilder()
+                        .makeFieldAccess(
+                                intersect.getCluster().getRexBuilder().makeInputRef(intersect, 0),
+                                0);
         assertThatThrownBy(
                         () ->
                                 PlannerColumnLineageExtractor.extract(
-                                        "sink-unsupported",
-                                        Collections.singletonList("a"),
-                                        relNode))
+                                        "sink-nested-intersection",
+                                        Collections.singletonList("value"),
+                                        project(intersect, member, "value")))
                 .isInstanceOf(TableLineageExtractionException.class)
-                .hasMessageContaining("Unsupported relational node")
-                .hasMessageContaining("Intersect");
+                .hasMessageContaining("RexFieldAccess");
     }
 
     @Test

@@ -30,9 +30,12 @@ import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.core.Calc;
 import org.apache.calcite.rel.core.Filter;
+import org.apache.calcite.rel.core.Intersect;
 import org.apache.calcite.rel.core.Join;
+import org.apache.calcite.rel.core.Minus;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.RepeatUnion;
+import org.apache.calcite.rel.core.SetOp;
 import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.core.TableSpool;
@@ -134,6 +137,9 @@ public final class PlannerColumnLineageExtractor {
         if (relNode instanceof Union) {
             return extractUnion((Union) relNode);
         }
+        if (relNode instanceof Intersect || relNode instanceof Minus) {
+            return extractMembershipSet((SetOp) relNode);
+        }
         if (relNode instanceof Sort) {
             return extractSort((Sort) relNode);
         }
@@ -230,10 +236,63 @@ public final class PlannerColumnLineageExtractor {
     private static NodeLineage extractJoin(Join join) {
         final NodeLineage left = extractNode(join.getLeft());
         final NodeLineage right = extractNode(join.getRight());
-        final NodeLineage combined = left.append(right, join.getRowType().getFieldNames());
-        return combined.withRowDependency(
-                lineageFromExpression(join.getCondition(), combined),
-                PlannerColumnLineageTransformation.JOIN);
+        final List<String> conditionFields = new ArrayList<>(left.fieldNames);
+        conditionFields.addAll(right.fieldNames);
+        final NodeLineage combined = left.append(right, conditionFields);
+        final NodeLineage result =
+                combined.withRowDependency(
+                        lineageFromExpression(join.getCondition(), combined),
+                        PlannerColumnLineageTransformation.JOIN);
+        return result.withFields(
+                join.getRowType().getFieldNames(),
+                join.getJoinType().projectsRight() ? result.fields : copyFields(left.fields));
+    }
+
+    private static NodeLineage extractMembershipSet(SetOp operation) {
+        final List<NodeLineage> inputs = new ArrayList<>();
+        final Set<PlannerColumnLineageInput> dependencies = new LinkedHashSet<>();
+        final Set<PlannerColumnLineageTransformation> transformations = new LinkedHashSet<>();
+        final Set<PlannerLineageDataset> sources = new LinkedHashSet<>();
+        final int fieldCount = operation.getRowType().getFieldCount();
+        for (RelNode node : operation.getInputs()) {
+            final NodeLineage input = extractNode(node);
+            if (input.fields.size() != fieldCount) {
+                throw new TableLineageExtractionException(
+                        "Set input field count does not match its output.");
+            }
+            inputs.add(input);
+            addInputs(dependencies, input.rowDependencies);
+            transformations.addAll(input.rowTransformations);
+            sources.addAll(input.sources);
+            // Every compared column controls whole-row membership, including ALL multiplicities.
+            for (FieldLineage field : input.fields) {
+                addIndirectInputs(dependencies, field.inputs);
+            }
+        }
+        if (inputs.isEmpty()) {
+            throw new TableLineageExtractionException(
+                    "Set operation must have at least one input.");
+        }
+        final List<FieldLineage> fields = copyFields(inputs.get(0).fields);
+        // Intersection is symmetric; subtraction can only return values from its first input.
+        if (operation instanceof Intersect) {
+            // Member metadata from only the first row must not survive merging other origins.
+            for (FieldLineage field : fields) {
+                field.nestedFields = null;
+            }
+            for (int n = 1; n < inputs.size(); n++) {
+                for (int i = 0; i < fieldCount; i++) {
+                    fields.get(i).merge(inputs.get(n).field(i));
+                }
+            }
+        }
+        transformations.add(PlannerColumnLineageTransformation.FILTER);
+        return new NodeLineage(
+                operation.getRowType().getFieldNames(),
+                fields,
+                dependencies,
+                transformations,
+                sources);
     }
 
     private static NodeLineage extractAggregate(Aggregate aggregate) {

@@ -79,6 +79,74 @@ class ColumnLineagePropagationTest {
             "INSERT INTO LineageSink SELECT `value` + 1 FROM LineageSource";
 
     @Test
+    void testSetMembershipLineageSurvivesDirectAndCompiledTranslation() throws Exception {
+        for (boolean batch : new boolean[] {false, true}) {
+            for (String operator :
+                    new String[] {"INTERSECT", "INTERSECT ALL", "EXCEPT", "EXCEPT ALL"}) {
+                final TableEnvironmentImpl environment =
+                        (TableEnvironmentImpl)
+                                TableEnvironmentImpl.create(
+                                        batch
+                                                ? EnvironmentSettings.inBatchMode()
+                                                : EnvironmentSettings.inStreamingMode());
+                createValuesTable(environment, "LeftSource", "value");
+                createValuesTable(environment, "RightSource", "value");
+                environment.createTemporaryTable(
+                        "SetSink",
+                        TableDescriptor.forConnector("values")
+                                .schema(
+                                        Schema.newBuilder()
+                                                .column("value", DataTypes.BIGINT())
+                                                .build())
+                                .option("sink-insert-only", "false")
+                                .build());
+                final String sql =
+                        "INSERT INTO SetSink SELECT `value` FROM LeftSource "
+                                + operator
+                                + " SELECT `value` FROM RightSource";
+                final ModifyOperation operation =
+                        (ModifyOperation) environment.getParser().parse(sql).get(0);
+                final LineageGraphObservation direct =
+                        LineageGraphUtils.observe(
+                                environment
+                                        .getPlanner()
+                                        .translate(Collections.singletonList(operation)));
+                final String json = environment.compilePlanSql(sql).asJsonString();
+                final LineageGraphObservation restored =
+                        LineageGraphUtils.observe(
+                                CompiledPlanUtils.toTransformations(
+                                        environment,
+                                        environment.loadPlan(PlanReference.fromJsonString(json))));
+                for (LineageGraphObservation observation :
+                        new LineageGraphObservation[] {direct, restored}) {
+                    assertThat(observation.getTableStatus()).isEqualTo("COMPLETE");
+                    assertThat(observation.getColumnStatus()).isEqualTo("COMPLETE");
+                    assertThat(observation.columnRelations()).hasSize(1);
+                    final List<String> expected = new ArrayList<>();
+                    expected.add(identifier("LeftSource").asSerializableString() + ":value:DIRECT");
+                    expected.add(
+                            identifier("LeftSource").asSerializableString() + ":value:INDIRECT");
+                    expected.add(
+                            identifier("RightSource").asSerializableString() + ":value:INDIRECT");
+                    if (operator.startsWith("INTERSECT")) {
+                        expected.add(
+                                identifier("RightSource").asSerializableString() + ":value:DIRECT");
+                    }
+                    assertThat(observation.columnRelations().get(0).inputs())
+                            .extracting(
+                                    input ->
+                                            input.inputDataset().name()
+                                                    + ":"
+                                                    + input.inputField()
+                                                    + ":"
+                                                    + input.dependencyType())
+                            .containsExactlyInAnyOrderElementsOf(expected);
+                }
+            }
+        }
+    }
+
+    @Test
     void testAnonymousSinkDoesNotEraseNamedWriterLineage() throws Exception {
         final TableEnvironmentImpl environment = createEnvironment();
         final StatementSet statements = environment.createStatementSet();
@@ -177,8 +245,8 @@ class ColumnLineagePropagationTest {
         final StatementSet statements = environment.createStatementSet();
         statements.addInsertSql(INSERT_SQL);
         statements.addInsertSql(
-                "INSERT INTO OtherSink SELECT `value` FROM LineageSource "
-                        + "INTERSECT SELECT `value` FROM OtherSource");
+                "INSERT INTO OtherSink SELECT l.`value` FROM LineageSource l "
+                        + "WHERE EXISTS (SELECT 1 FROM OtherSource r WHERE r.`value` = l.`value`)");
         final String json = statements.compilePlan().asJsonString();
         final LineageGraphObservation observation =
                 LineageGraphUtils.observe(
@@ -234,7 +302,8 @@ class ColumnLineagePropagationTest {
             statements.addInsertSql(INSERT_SQL);
             statements.addInsertSql("INSERT INTO SharedSink SELECT `value` FROM LineageSource");
             statements.addInsertSql(
-                    "INSERT INTO SharedSink SELECT `value` FROM LineageSource INTERSECT SELECT `value` FROM OtherSource");
+                    "INSERT INTO SharedSink SELECT l.`value` FROM LineageSource l "
+                            + "WHERE EXISTS (SELECT 1 FROM OtherSource r WHERE r.`value` = l.`value`)");
             final LineageGraphObservation observation =
                     LineageGraphUtils.observe(
                             CompiledPlanUtils.toTransformations(
@@ -257,8 +326,8 @@ class ColumnLineagePropagationTest {
         final String json =
                 environment
                         .compilePlanSql(
-                                "INSERT INTO LineageSink SELECT `value` FROM LineageSource WHERE 1=0 "
-                                        + "INTERSECT SELECT `value` FROM OtherSource WHERE 1=0")
+                                "INSERT INTO LineageSink SELECT l.`value` FROM LineageSource l WHERE 1=0 "
+                                        + "AND EXISTS (SELECT 1 FROM OtherSource r WHERE r.`value` = l.`value`)")
                         .asJsonString();
         environment.dropTemporaryTable("LineageSource");
         environment.dropTemporaryTable("OtherSource");
