@@ -68,6 +68,7 @@ import org.apache.flink.test.junit5.MiniClusterExtension;
 import org.apache.flink.test.util.TestUtils;
 import org.apache.flink.testutils.executor.TestExecutorExtension;
 import org.apache.flink.util.CollectionUtil;
+import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.UserClassLoaderJarTestUtils;
 import org.apache.flink.util.concurrent.ExecutorThreadFactory;
 import org.apache.flink.util.function.RunnableWithException;
@@ -99,8 +100,10 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.apache.flink.core.testutils.FlinkAssertions.anyCauseMatches;
@@ -930,18 +933,14 @@ public class SqlGatewayServiceITCase {
     void testReleaseLockWhenFailedToSubmitOperation() throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
         int maximumThreads = 500;
-        List<SessionHandle> sessions = new ArrayList<>();
-        List<OperationHandle> operations = new ArrayList<>();
         for (int i = 0; i < maximumThreads; i++) {
             SessionHandle sessionHandle = service.openSession(defaultSessionEnvironment);
-            sessions.add(sessionHandle);
-            operations.add(
-                    service.submitOperation(
-                            sessionHandle,
-                            () -> {
-                                latch.await();
-                                return getDefaultResultSet();
-                            }));
+            service.submitOperation(
+                    sessionHandle,
+                    () -> {
+                        latch.await();
+                        return getDefaultResultSet();
+                    });
         }
         // The queue is full and should reject
         SessionHandle sessionHandle = service.openSession(defaultSessionEnvironment);
@@ -955,16 +954,43 @@ public class SqlGatewayServiceITCase {
                                         }))
                 .satisfies(anyCauseMatches(RejectedExecutionException.class));
         latch.countDown();
-        // Wait the first operation finishes
-        awaitOperationTermination(service, sessions.get(0), operations.get(0));
-        // Service is able to submit operation
+        // Service is eventually able to submit an operation after a worker becomes available.
         CountDownLatch success = new CountDownLatch(1);
-        service.submitOperation(
-                sessionHandle,
-                () -> {
-                    success.countDown();
-                    return getDefaultResultSet();
-                });
+        Future<?> resubmission =
+                EXECUTOR_EXTENSION
+                        .getExecutor()
+                        .submit(
+                                () -> {
+                                    CommonTestUtils.waitUtil(
+                                            () -> {
+                                                try {
+                                                    service.submitOperation(
+                                                            sessionHandle,
+                                                            () -> {
+                                                                success.countDown();
+                                                                return getDefaultResultSet();
+                                                            });
+                                                    return true;
+                                                } catch (SqlGatewayException e) {
+                                                    if (ExceptionUtils.findThrowable(
+                                                                    e,
+                                                                    RejectedExecutionException
+                                                                            .class)
+                                                            .isPresent()) {
+                                                        return false;
+                                                    }
+                                                    throw e;
+                                                }
+                                            },
+                                            Duration.ofSeconds(10),
+                                            "Failed to resubmit the operation.");
+                                    return null;
+                                });
+        try {
+            resubmission.get(30, TimeUnit.SECONDS);
+        } finally {
+            resubmission.cancel(true);
+        }
         CommonTestUtils.waitUtil(
                 () -> success.getCount() == 0, Duration.ofSeconds(10), "Should come to end.");
     }
