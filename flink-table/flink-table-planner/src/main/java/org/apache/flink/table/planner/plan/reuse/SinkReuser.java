@@ -18,6 +18,8 @@
 
 package org.apache.flink.table.planner.plan.reuse;
 
+import org.apache.flink.table.catalog.ObjectIdentifier;
+import org.apache.flink.table.planner.lineage.PlannerColumnLineagePlanBinder;
 import org.apache.flink.table.planner.plan.abilities.sink.SinkAbilitySpec;
 import org.apache.flink.table.planner.plan.nodes.calcite.Sink;
 import org.apache.flink.table.planner.plan.nodes.physical.batch.BatchPhysicalUnion;
@@ -29,6 +31,8 @@ import org.apache.flink.util.Preconditions;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Union;
+
+import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -77,9 +81,15 @@ import java.util.stream.Collectors;
  */
 public class SinkReuser {
     private final boolean isStreamingMode;
+    @Nullable private final PlannerColumnLineagePlanBinder lineage;
 
     public SinkReuser(boolean isStreamingMode) {
+        this(isStreamingMode, null);
+    }
+
+    public SinkReuser(boolean isStreamingMode, @Nullable PlannerColumnLineagePlanBinder lineage) {
         this.isStreamingMode = isStreamingMode;
+        this.lineage = lineage;
     }
 
     public List<RelNode> reuseDuplicatedSink(List<RelNode> relNodes) {
@@ -116,6 +126,9 @@ public class SinkReuser {
 
                     // Use the first sink node as the final reused sink node
                     Sink reusedSink = originalSinks.get(0);
+                    if (lineage != null) {
+                        lineage.reuseSinks(originalSinks);
+                    }
 
                     Union unionForReusedSinks;
 
@@ -175,7 +188,6 @@ public class SinkReuser {
 
     private String getDigest(Sink sink) {
         List<String> digest = new ArrayList<>();
-        digest.add(sink.contextResolvedTable().getIdentifier().asSummaryString());
 
         int[][] targetColumns = sink.targetColumns();
         if (targetColumns != null && targetColumns.length > 0) {
@@ -212,8 +224,11 @@ public class SinkReuser {
 
         private final String digest;
 
+        private final ObjectIdentifier identifier;
+
         ReusableSinkGroup(Sink sink) {
             this.originalSinks.add(sink);
+            this.identifier = sink.contextResolvedTable().getIdentifier();
             this.inputTraitSet = sink.getInput().getTraitSet();
             this.digest = getDigest(sink);
             this.sinkAbilitySpecs = sink.abilitySpecs();
@@ -224,8 +239,9 @@ public class SinkReuser {
             SinkAbilitySpec[] currentSinkSpecs = sinkNode.abilitySpecs();
             RelTraitSet currentInputTraitSet = sinkNode.getInput().getTraitSet();
 
-            // Only table sink with the same digest, specs and input trait set can be reused
-            return this.digest.equals(currentSinkDigest)
+            // Only sinks with the same identifier, digest, specs and input traits can be reused.
+            return this.identifier.equals(sinkNode.contextResolvedTable().getIdentifier())
+                    && this.digest.equals(currentSinkDigest)
                     && Arrays.equals(this.sinkAbilitySpecs, currentSinkSpecs)
                     && this.inputTraitSet.equals(currentInputTraitSet);
         }

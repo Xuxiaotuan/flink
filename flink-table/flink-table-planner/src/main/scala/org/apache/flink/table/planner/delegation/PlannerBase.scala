@@ -41,6 +41,7 @@ import org.apache.flink.table.planner.catalog.CatalogManagerCalciteSchema
 import org.apache.flink.table.planner.connectors.DynamicSinkUtils
 import org.apache.flink.table.planner.connectors.DynamicSinkUtils.validateSchemaAndApplyImplicitCast
 import org.apache.flink.table.planner.hint.FlinkHints
+import org.apache.flink.table.planner.lineage.PlannerColumnLineagePlanBinder
 import org.apache.flink.table.planner.operations.PlannerQueryOperation
 import org.apache.flink.table.planner.plan.ExecNodeGraphInternalPlan
 import org.apache.flink.table.planner.plan.nodes.calcite.LogicalLegacySink
@@ -180,9 +181,12 @@ abstract class PlannerBase(
     }
 
     val relNodes = modifyOperations.asScala.map(translateToRel)
-    val optimizedRelNodes = optimize(relNodes)
+    val columnLineage = PlannerColumnLineagePlanBinder.observe(relNodes.asJava, modifyOperations)
+    val optimizedRelNodes = optimize(relNodes, columnLineage)
     val execGraph = translateToExecNodeGraph(optimizedRelNodes, isCompiled = false)
+    columnLineage.bind(execGraph)
     val transformations = translateToPlan(execGraph)
+    columnLineage.markFailedTransformations(transformations)
     afterTranslation()
     transformations
   }
@@ -216,8 +220,10 @@ abstract class PlannerBase(
   override def compilePlan(modifyOperations: util.List[ModifyOperation]): InternalPlan = {
     beforeTranslation()
     val relNodes = modifyOperations.asScala.map(translateToRel)
-    val optimizedRelNodes = optimize(relNodes)
+    val columnLineage = PlannerColumnLineagePlanBinder.observe(relNodes.asJava, modifyOperations)
+    val optimizedRelNodes = optimize(relNodes, columnLineage)
     val execGraph = translateToExecNodeGraph(optimizedRelNodes, isCompiled = true)
+    columnLineage.bind(execGraph)
     afterTranslation()
     compileExecNodeGraphToInternalPlan(createSerdeContext, execGraph)
   }
@@ -393,6 +399,14 @@ abstract class PlannerBase(
   @VisibleForTesting
   private[flink] def optimize(relNodes: Seq[RelNode]): Seq[RelNode] = {
     val optimizedRelNodes = getOptimizer.optimize(relNodes)
+    require(optimizedRelNodes.size <= relNodes.size)
+    optimizedRelNodes
+  }
+
+  private[flink] def optimize(
+      relNodes: Seq[RelNode],
+      lineage: PlannerColumnLineagePlanBinder): Seq[RelNode] = {
+    val optimizedRelNodes = getOptimizer.optimize(relNodes, lineage)
     require(optimizedRelNodes.size <= relNodes.size)
     optimizedRelNodes
   }
@@ -634,8 +648,11 @@ abstract class PlannerBase(
         translateToRel(modifyOperation)
       case o => throw new TableException(s"Unsupported operation: ${o.getClass.getCanonicalName}")
     }
-    val optimizedRelNodes = optimize(sinkRelNodes)
+    val columnLineage =
+      PlannerColumnLineagePlanBinder.observe(sinkRelNodes.asJava, operations)
+    val optimizedRelNodes = optimize(sinkRelNodes, columnLineage)
     val execGraph = translateToExecNodeGraph(optimizedRelNodes, isCompiled = false)
+    columnLineage.bind(execGraph)
     val transformations = translateToPlan(execGraph)
     afterTranslation()
 

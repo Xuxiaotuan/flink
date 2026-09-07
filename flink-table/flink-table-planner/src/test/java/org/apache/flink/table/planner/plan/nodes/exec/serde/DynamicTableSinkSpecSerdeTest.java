@@ -37,6 +37,13 @@ import org.apache.flink.table.factories.FactoryUtil;
 import org.apache.flink.table.factories.TestDynamicTableFactory;
 import org.apache.flink.table.factories.TestFormatFactory;
 import org.apache.flink.table.planner.factories.TestValuesTableFactory;
+import org.apache.flink.table.planner.lineage.PlannerColumnLineageDependencyType;
+import org.apache.flink.table.planner.lineage.PlannerColumnLineageInput;
+import org.apache.flink.table.planner.lineage.PlannerColumnLineageOrigin;
+import org.apache.flink.table.planner.lineage.PlannerColumnLineageRelation;
+import org.apache.flink.table.planner.lineage.PlannerLineageDataset;
+import org.apache.flink.table.planner.lineage.PlannerSinkColumnLineage;
+import org.apache.flink.table.planner.lineage.PlannerSinkTableLineage;
 import org.apache.flink.table.planner.plan.abilities.sink.OverwriteSpec;
 import org.apache.flink.table.planner.plan.abilities.sink.PartitioningSpec;
 import org.apache.flink.table.planner.plan.abilities.sink.TargetColumnWritingSpec;
@@ -48,10 +55,14 @@ import org.apache.flink.table.types.logical.IntType;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.utils.CatalogManagerMocks;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -77,6 +88,106 @@ import static org.junit.jupiter.api.parallel.ExecutionMode.CONCURRENT;
 /** Tests for {@link DynamicTableSinkSpec} serialization and deserialization. */
 @Execution(CONCURRENT)
 class DynamicTableSinkSpecSerdeTest {
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "2", "-1", "1.5", "\"1\"", "null"})
+    void testUnknownOptionalLineageVersionDoesNotPreventRestore(String version) throws Exception {
+        final PlannerMocks mocks = PlannerMocks.create();
+        final SerdeContext context =
+                configuredSerdeContext(mocks.getCatalogManager(), mocks.getTableConfig());
+        final DynamicTableSinkSpec spec = testDynamicTableSinkSpecSerde().findFirst().get();
+        final String sinkKey =
+                spec.getContextResolvedTable().getIdentifier().asSerializableString();
+        mocks.getCatalogManager()
+                .createTemporaryTable(
+                        spec.getContextResolvedTable().getResolvedTable(),
+                        spec.getContextResolvedTable().getIdentifier(),
+                        false);
+        spec.setColumnLineage(
+                new PlannerSinkColumnLineage(
+                        sinkKey,
+                        Collections.emptyList(),
+                        Collections.emptyList(),
+                        Collections.emptyList()));
+        spec.setTableLineage(
+                new PlannerSinkTableLineage(
+                        sinkKey, Collections.emptyList(), Collections.emptyList()));
+        final ObjectMapper mapper = new ObjectMapper();
+        final ObjectNode json = (ObjectNode) mapper.readTree(toJson(context, spec));
+        for (String field : Arrays.asList("columnLineage", "tableLineage")) {
+            ((ObjectNode) json.get(field)).set("formatVersion", mapper.readTree(version));
+        }
+        final DynamicTableSinkSpec restored =
+                toObject(context, json.toString(), DynamicTableSinkSpec.class);
+        assertThat(restored.getContextResolvedTable()).isEqualTo(spec.getContextResolvedTable());
+        assertThat(restored.getColumnLineage()).isNull();
+        assertThat(restored.getTableLineage()).isNull();
+        assertThat(restored.getTableSink(mocks.getPlannerContext().getFlinkContext())).isNotNull();
+    }
+
+    @Test
+    void testVersionedAndLegacyOptionalLineageRoundTrip() throws Exception {
+        final PlannerMocks mocks = PlannerMocks.create();
+        final SerdeContext context =
+                configuredSerdeContext(mocks.getCatalogManager(), mocks.getTableConfig());
+        final DynamicTableSinkSpec spec = testDynamicTableSinkSpecSerde().findFirst().get();
+        final String sinkKey =
+                spec.getContextResolvedTable().getIdentifier().asSerializableString();
+        mocks.getCatalogManager()
+                .createTemporaryTable(
+                        spec.getContextResolvedTable().getResolvedTable(),
+                        spec.getContextResolvedTable().getIdentifier(),
+                        false);
+        spec.setColumnLineage(
+                new PlannerSinkColumnLineage(
+                        sinkKey,
+                        Collections.emptyList(),
+                        Collections.emptyList(),
+                        Collections.emptyList()));
+        spec.setTableLineage(
+                new PlannerSinkTableLineage(
+                        sinkKey, Collections.emptyList(), Collections.emptyList()));
+        final ObjectNode json = (ObjectNode) new ObjectMapper().readTree(toJson(context, spec));
+        assertThat(json.path("columnLineage").path("formatVersion").asInt()).isEqualTo(1);
+        assertThat(json.path("tableLineage").path("formatVersion").asInt()).isEqualTo(1);
+        for (boolean legacy : Arrays.asList(false, true)) {
+            if (legacy) {
+                ((ObjectNode) json.get("columnLineage")).remove("formatVersion");
+                ((ObjectNode) json.get("tableLineage")).remove("formatVersion");
+            }
+            final DynamicTableSinkSpec restored =
+                    toObject(context, json.toString(), DynamicTableSinkSpec.class);
+            assertThat(restored.getColumnLineage()).isEqualTo(spec.getColumnLineage());
+            assertThat(restored.getTableLineage().getSinkKey()).isEqualTo(sinkKey);
+            assertThat(restored.getTableLineage().getExpectedSources()).isEmpty();
+        }
+    }
+
+    @Test
+    void testOptionalLineageDoesNotChangeExecutionIdentity() {
+        final DynamicTableSinkSpec spec = testDynamicTableSinkSpecSerde().findFirst().get();
+        final DynamicTableSinkSpec sameExecution =
+                new DynamicTableSinkSpec(spec.getContextResolvedTable(), null, null);
+        final java.util.Set<DynamicTableSinkSpec> cached = new java.util.HashSet<>();
+        cached.add(spec);
+        spec.setColumnLineage(
+                new PlannerSinkColumnLineage(
+                        spec.getContextResolvedTable().getIdentifier().asSerializableString(),
+                        Collections.emptyList(),
+                        Collections.emptyList(),
+                        Collections.emptyList()));
+
+        spec.setTableLineage(
+                new PlannerSinkTableLineage(
+                        spec.getContextResolvedTable().getIdentifier().asSerializableString(),
+                        Collections.emptyList(),
+                        Collections.emptyList()));
+
+        assertThat(spec).isEqualTo(sameExecution);
+        assertThat(spec.hashCode()).isEqualTo(sameExecution.hashCode());
+        assertThat(cached).contains(spec, sameExecution);
+        assertThat(spec.toString()).doesNotContain("PlannerSinkColumnLineage@");
+    }
 
     static Stream<DynamicTableSinkSpec> testDynamicTableSinkSpecSerde() {
         Map<String, String> options1 = new HashMap<>();
@@ -316,5 +427,118 @@ class DynamicTableSinkSpecSerdeTest {
         assertThat(dynamicTableSink.bufferSize).isEqualTo(2000);
         assertThat(((TestFormatFactory.EncodingFormatMock) dynamicTableSink.valueFormat).delimiter)
                 .isEqualTo(",");
+    }
+
+    @Test
+    void testColumnLineageJsonAndSmileRoundTrip() throws Exception {
+        final ObjectIdentifier sinkIdentifier =
+                ObjectIdentifier.of(
+                        CatalogManagerMocks.DEFAULT_CATALOG,
+                        CatalogManagerMocks.DEFAULT_DATABASE,
+                        "LineageSink");
+        final ResolvedSchema sinkSchema =
+                ResolvedSchema.of(Column.physical("result", DataTypes.BIGINT()));
+        final CatalogTable sinkTable =
+                CatalogTable.newBuilder()
+                        .schema(Schema.newBuilder().fromResolvedSchema(sinkSchema).build())
+                        .options(
+                                Collections.singletonMap(
+                                        "connector", TestValuesTableFactory.IDENTIFIER))
+                        .build();
+
+        final PlannerMocks plannerMocks = PlannerMocks.create();
+        final CatalogManager catalogManager = plannerMocks.getCatalogManager();
+        catalogManager.createTable(
+                new ResolvedCatalogTable(sinkTable, sinkSchema), sinkIdentifier, false);
+        final SerdeContext serdeContext =
+                configuredSerdeContext(catalogManager, plannerMocks.getTableConfig());
+
+        final PlannerLineageDataset sourceDataset =
+                new PlannerLineageDataset(
+                        Arrays.asList(
+                                CatalogManagerMocks.DEFAULT_CATALOG,
+                                CatalogManagerMocks.DEFAULT_DATABASE,
+                                "LineageSource"));
+        final PlannerSinkColumnLineage columnLineage =
+                new PlannerSinkColumnLineage(
+                        sinkIdentifier.asSerializableString(),
+                        Collections.singletonList("result"),
+                        Collections.singletonList(sourceDataset),
+                        Collections.singletonList(
+                                new PlannerColumnLineageRelation(
+                                        "result",
+                                        Collections.singletonList(
+                                                new PlannerColumnLineageInput(
+                                                        sourceDataset,
+                                                        "value",
+                                                        PlannerColumnLineageDependencyType.DIRECT)),
+                                        PlannerColumnLineageOrigin.INPUT_FIELDS,
+                                        Collections.emptyList())));
+        final DynamicTableSinkSpec spec =
+                new DynamicTableSinkSpec(
+                        ContextResolvedTable.permanent(
+                                sinkIdentifier,
+                                catalogManager
+                                        .getCatalog(catalogManager.getCurrentCatalog())
+                                        .orElseThrow(AssertionError::new),
+                                new ResolvedCatalogTable(sinkTable, sinkSchema)),
+                        Collections.emptyList(),
+                        null,
+                        columnLineage);
+
+        final String json =
+                CompiledPlanSerdeUtil.createJsonObjectWriter(serdeContext).writeValueAsString(spec);
+        final DynamicTableSinkSpec jsonRoundTrip =
+                CompiledPlanSerdeUtil.createJsonObjectReader(serdeContext)
+                        .readValue(json, DynamicTableSinkSpec.class);
+        final byte[] smile =
+                CompiledPlanSerdeUtil.createSmileObjectWriter(serdeContext).writeValueAsBytes(spec);
+        final DynamicTableSinkSpec smileRoundTrip =
+                CompiledPlanSerdeUtil.createSmileObjectReader(serdeContext)
+                        .readValue(smile, DynamicTableSinkSpec.class);
+
+        assertThat(jsonRoundTrip.getColumnLineage()).isEqualTo(columnLineage);
+        assertThat(jsonRoundTrip.getColumnLineage().getExpectedSources())
+                .containsExactly(sourceDataset);
+        assertThat(smileRoundTrip.getColumnLineage()).isEqualTo(columnLineage);
+        assertThat(smileRoundTrip.getColumnLineage().getExpectedSources())
+                .containsExactly(sourceDataset);
+
+        final JsonNode missingExpectedSources = new ObjectMapper().readTree(json);
+        ((ObjectNode) missingExpectedSources.get("columnLineage")).remove("expectedSources");
+        final DynamicTableSinkSpec withoutOptionalLineage =
+                CompiledPlanSerdeUtil.createJsonObjectReader(serdeContext)
+                        .readValue(missingExpectedSources.toString(), DynamicTableSinkSpec.class);
+        assertThat(withoutOptionalLineage.getColumnLineage()).isNull();
+        assertThat(withoutOptionalLineage.getContextResolvedTable())
+                .isEqualTo(spec.getContextResolvedTable());
+
+        final PlannerSinkColumnLineage constantLineage =
+                new PlannerSinkColumnLineage(
+                        sinkIdentifier.asSerializableString(),
+                        Collections.singletonList("result"),
+                        Collections.emptyList(),
+                        Collections.singletonList(
+                                new PlannerColumnLineageRelation(
+                                        "result",
+                                        Collections.emptyList(),
+                                        PlannerColumnLineageOrigin.CONSTANT,
+                                        Collections.emptyList())));
+        spec.setColumnLineage(constantLineage);
+        final String constantJson =
+                CompiledPlanSerdeUtil.createJsonObjectWriter(serdeContext).writeValueAsString(spec);
+        final DynamicTableSinkSpec constantJsonRoundTrip =
+                CompiledPlanSerdeUtil.createJsonObjectReader(serdeContext)
+                        .readValue(constantJson, DynamicTableSinkSpec.class);
+        final byte[] constantSmile =
+                CompiledPlanSerdeUtil.createSmileObjectWriter(serdeContext).writeValueAsBytes(spec);
+        final DynamicTableSinkSpec constantSmileRoundTrip =
+                CompiledPlanSerdeUtil.createSmileObjectReader(serdeContext)
+                        .readValue(constantSmile, DynamicTableSinkSpec.class);
+
+        assertThat(constantJsonRoundTrip.getColumnLineage()).isEqualTo(constantLineage);
+        assertThat(constantJsonRoundTrip.getColumnLineage().getExpectedSources()).isEmpty();
+        assertThat(constantSmileRoundTrip.getColumnLineage()).isEqualTo(constantLineage);
+        assertThat(constantSmileRoundTrip.getColumnLineage().getExpectedSources()).isEmpty();
     }
 }

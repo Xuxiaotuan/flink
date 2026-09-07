@@ -57,6 +57,23 @@ public class PipelineExecutorUtils {
             @Nonnull final Pipeline pipeline,
             @Nonnull final ExecutionPlan executionPlan,
             List<JobStatusChangedListener> listeners) {
+        notifyJobStatusListeners(
+                pipeline,
+                executionPlan,
+                listeners,
+                executionPlan
+                        .getJobConfiguration()
+                        .getString(
+                                org.apache.flink.core.execution.SubmissionIdentity.CONFIG_KEY,
+                                null));
+    }
+
+    /** Notifies with the identity captured at submission, even when the caller reuses the plan. */
+    public static void notifyJobStatusListeners(
+            @Nonnull final Pipeline pipeline,
+            @Nonnull final ExecutionPlan executionPlan,
+            List<JobStatusChangedListener> listeners,
+            @javax.annotation.Nullable String submissionId) {
         RuntimeExecutionMode executionMode =
                 executionPlan.getJobConfiguration().get(ExecutionOptions.RUNTIME_MODE);
         listeners.forEach(
@@ -67,7 +84,8 @@ public class PipelineExecutorUtils {
                                         executionPlan.getJobID(),
                                         executionPlan.getName(),
                                         ((StreamGraph) pipeline).getLineageGraph(),
-                                        executionMode));
+                                        executionMode,
+                                        submissionId));
                     } catch (Throwable e) {
                         LOG.error(
                                 "Fail to notify job status changed listener {}",

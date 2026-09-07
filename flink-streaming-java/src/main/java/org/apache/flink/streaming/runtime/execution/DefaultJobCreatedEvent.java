@@ -21,25 +21,45 @@ package org.apache.flink.streaming.runtime.execution;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.RuntimeExecutionMode;
+import org.apache.flink.core.execution.SubmissionIdentity;
 import org.apache.flink.streaming.api.lineage.LineageGraph;
+
+import javax.annotation.Nullable;
 
 /** Default implementation for {@link JobCreatedEvent}. */
 @Internal
-public class DefaultJobCreatedEvent implements JobCreatedEvent {
+public class DefaultJobCreatedEvent implements JobCreatedEvent, SubmissionIdentity {
     private final JobID jobId;
     private final String jobName;
     private final LineageGraph lineageGraph;
     private final RuntimeExecutionMode executionMode;
+    @Nullable private final String submissionId;
 
     public DefaultJobCreatedEvent(
             JobID jobId,
             String jobName,
             LineageGraph lineageGraph,
             RuntimeExecutionMode executionMode) {
+        this(jobId, jobName, lineageGraph, executionMode, null);
+    }
+
+    public DefaultJobCreatedEvent(
+            JobID jobId,
+            String jobName,
+            LineageGraph lineageGraph,
+            RuntimeExecutionMode executionMode,
+            @Nullable String submissionId) {
         this.jobId = jobId;
         this.jobName = jobName;
         this.lineageGraph = lineageGraph;
         this.executionMode = executionMode;
+        this.submissionId = submissionId;
+    }
+
+    @Nullable
+    @Override
+    public String submissionId() {
+        return submissionId;
     }
 
     @Override

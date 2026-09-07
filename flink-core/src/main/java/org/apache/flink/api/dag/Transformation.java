@@ -108,6 +108,20 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  */
 @Internal
 public abstract class Transformation<T> {
+    @Nullable private String lineageFailure;
+
+    /** Records an observer failure without changing the execution transformation. */
+    @Internal
+    public void setLineageFailure(String reason) {
+        this.lineageFailure = reason;
+    }
+
+    /** Returns an observer failure that prevents publishing a partial lineage graph. */
+    @Internal
+    @Nullable
+    public String getLineageFailure() {
+        return lineageFailure;
+    }
 
     // Has to be equal to StreamGraphGenerator.UPPER_BOUND_MAX_PARALLELISM
     public static final int UPPER_BOUND_MAX_PARALLELISM = 1 << 15;

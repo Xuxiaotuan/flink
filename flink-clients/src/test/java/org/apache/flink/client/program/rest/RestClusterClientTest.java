@@ -291,10 +291,85 @@ class RestClusterClientTest {
         }
     }
 
+    @Test
+    void testEachSubmissionHasFreshIdentityBeforeReturning() throws Exception {
+        TestJobSubmitHandler handler = new TestJobSubmitHandler();
+        try (TestRestServerEndpoint endpoint = createRestServerEndpoint(handler);
+                RestClusterClient<?> client =
+                        createRestClusterClient(endpoint.getServerAddress().getPort())) {
+            CompletableFuture<JobID> first = client.submitJob(jobGraph);
+            String firstId =
+                    jobGraph.getJobConfiguration()
+                            .getString(
+                                    org.apache.flink.core.execution.SubmissionIdentity.CONFIG_KEY,
+                                    null);
+            CompletableFuture<JobID> second = client.submitJob(jobGraph);
+            String secondId =
+                    jobGraph.getJobConfiguration()
+                            .getString(
+                                    org.apache.flink.core.execution.SubmissionIdentity.CONFIG_KEY,
+                                    null);
+            first.get();
+            second.get();
+            assertThat(firstId).isNotNull();
+            assertThat(secondId).isNotNull().isNotEqualTo(firstId);
+            assertThat(handler.submissionIds).containsExactlyInAnyOrder(firstId, secondId);
+        }
+    }
+
+    @Test
+    void testStreamGraphSubmissionTransfersIdentity() throws Exception {
+        TestJobSubmitHandler handler = new TestJobSubmitHandler();
+        org.apache.flink.streaming.api.graph.StreamGraph graph =
+                new org.apache.flink.streaming.api.graph.StreamGraph(
+                        new Configuration(),
+                        new org.apache.flink.api.common.ExecutionConfig(),
+                        new org.apache.flink.streaming.api.environment.CheckpointConfig(),
+                        org.apache.flink.runtime.jobgraph.SavepointRestoreSettings.none());
+        graph.setJobId(jobId);
+        graph.serializeUserDefinedInstances();
+        try (TestRestServerEndpoint endpoint = createRestServerEndpoint(handler);
+                RestClusterClient<?> client =
+                        createRestClusterClient(endpoint.getServerAddress().getPort())) {
+            client.submitJob(graph).get();
+            String submissionId =
+                    graph.getJobConfiguration()
+                            .getString(
+                                    org.apache.flink.core.execution.SubmissionIdentity.CONFIG_KEY,
+                                    null);
+            assertThat(submissionId).isNotNull();
+            assertThat(handler.submissionIds).containsExactly(submissionId);
+        }
+    }
+
+    @Test
+    void testUncheckedSerializationFailureIsReturnedInFuture() throws Exception {
+        JobGraph brokenGraph = new UnserializableJobGraph();
+        try (TestRestServerEndpoint endpoint =
+                        createRestServerEndpoint(new TestJobSubmitHandler());
+                RestClusterClient<?> client =
+                        createRestClusterClient(endpoint.getServerAddress().getPort())) {
+            CompletableFuture<JobID> submission = client.submitJob(brokenGraph);
+            assertThatThrownBy(submission::get).hasRootCauseInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    private static final class UnserializableJobGraph extends JobGraph {
+        private UnserializableJobGraph() {
+            super("serialization failure");
+        }
+
+        private void writeObject(java.io.ObjectOutputStream out) {
+            throw new IllegalStateException("test serialization failure");
+        }
+    }
+
     private class TestJobSubmitHandler
             extends TestHandler<
                     JobSubmitRequestBody, JobSubmitResponseBody, EmptyMessageParameters> {
         private volatile boolean jobSubmitted = false;
+        private final java.util.List<String> submissionIds =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
 
         private TestJobSubmitHandler() {
             super(JobSubmitHeaders.getInstance());
@@ -306,6 +381,26 @@ class RestClusterClientTest {
                 @Nonnull DispatcherGateway gateway)
                 throws RestHandlerException {
             jobSubmitted = true;
+            for (java.io.File file : request.getUploadedFiles()) {
+                if (file.getName().endsWith(".bin")) {
+                    try (java.io.ObjectInputStream input =
+                            new java.io.ObjectInputStream(
+                                    java.nio.file.Files.newInputStream(file.toPath()))) {
+                        org.apache.flink.streaming.api.graph.ExecutionPlan plan =
+                                (org.apache.flink.streaming.api.graph.ExecutionPlan)
+                                        input.readObject();
+                        submissionIds.add(
+                                plan.getJobConfiguration()
+                                        .getString(
+                                                org.apache.flink.core.execution.SubmissionIdentity
+                                                        .CONFIG_KEY,
+                                                null));
+                    } catch (IOException | ClassNotFoundException e) {
+                        return org.apache.flink.util.concurrent.FutureUtils.completedExceptionally(
+                                e);
+                    }
+                }
+            }
             return CompletableFuture.completedFuture(new JobSubmitResponseBody("/url"));
         }
     }

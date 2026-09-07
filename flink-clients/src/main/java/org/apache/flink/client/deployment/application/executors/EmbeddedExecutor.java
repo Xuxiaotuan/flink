@@ -147,8 +147,23 @@ public class EmbeddedExecutor implements PipelineExecutor {
             LOG.debug("Effective Configuration: {}", configuration);
         }
 
-        final CompletableFuture<JobID> jobSubmissionFuture =
-                submitJob(configuration, dispatcherGateway, streamGraph, timeout);
+        final CompletableFuture<JobID> jobSubmissionFuture;
+        final String submissionId;
+        synchronized (streamGraph) {
+            jobSubmissionFuture =
+                    submitJob(
+                            configuration,
+                            dispatcherGateway,
+                            streamGraph,
+                            timeout,
+                            userCodeClassloader);
+            submissionId =
+                    streamGraph
+                            .getJobConfiguration()
+                            .getString(
+                                    org.apache.flink.core.execution.SubmissionIdentity.CONFIG_KEY,
+                                    null);
+        }
 
         return jobSubmissionFuture
                 .thenApplyAsync(
@@ -175,7 +190,10 @@ public class EmbeddedExecutor implements PipelineExecutor {
                         (jobClient, throwable) -> {
                             if (throwable == null) {
                                 PipelineExecutorUtils.notifyJobStatusListeners(
-                                        pipeline, streamGraph, jobStatusChangedListeners);
+                                        pipeline,
+                                        streamGraph,
+                                        jobStatusChangedListeners,
+                                        submissionId);
                             } else {
                                 LOG.error(
                                         "Failed to submit job graph to application cluster",
@@ -188,10 +206,28 @@ public class EmbeddedExecutor implements PipelineExecutor {
             final Configuration configuration,
             final DispatcherGateway dispatcherGateway,
             final StreamGraph streamGraph,
-            final Duration rpcTimeout) {
+            final Duration rpcTimeout,
+            final ClassLoader userCodeClassloader) {
         checkNotNull(streamGraph);
 
         LOG.info("Submitting Job with JobId={}.", streamGraph.getJobID());
+
+        final StreamGraph submittedGraph;
+        synchronized (streamGraph) {
+            streamGraph
+                    .getJobConfiguration()
+                    .setString(
+                            org.apache.flink.core.execution.SubmissionIdentity.CONFIG_KEY,
+                            java.util.UUID.randomUUID().toString());
+            try {
+                streamGraph.serializeUserDefinedInstances();
+                submittedGraph =
+                        org.apache.flink.util.InstantiationUtil.clone(
+                                streamGraph, userCodeClassloader);
+            } catch (Exception e) {
+                return org.apache.flink.util.concurrent.FutureUtils.completedExceptionally(e);
+            }
+        }
 
         return dispatcherGateway
                 .getBlobServerPort(rpcTimeout)
@@ -204,15 +240,14 @@ public class EmbeddedExecutor implements PipelineExecutor {
                         blobServerAddress -> {
                             try {
                                 ClientUtils.extractAndUploadExecutionPlanFiles(
-                                        streamGraph,
+                                        submittedGraph,
                                         () -> new BlobClient(blobServerAddress, configuration));
-                                streamGraph.serializeUserDefinedInstances();
                             } catch (Exception e) {
                                 throw new CompletionException(e);
                             }
 
-                            return dispatcherGateway.submitJob(streamGraph, rpcTimeout);
+                            return dispatcherGateway.submitJob(submittedGraph, rpcTimeout);
                         })
-                .thenApply(ack -> streamGraph.getJobID());
+                .thenApply(ack -> submittedGraph.getJobID());
     }
 }

@@ -42,7 +42,6 @@ import org.apache.flink.runtime.jobgraph.JobType;
 import org.apache.flink.runtime.jobgraph.SavepointRestoreSettings;
 import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
 import org.apache.flink.streaming.api.environment.CheckpointConfig;
-import org.apache.flink.streaming.api.lineage.LineageGraph;
 import org.apache.flink.streaming.api.lineage.LineageGraphUtils;
 import org.apache.flink.streaming.api.operators.sorted.state.BatchExecutionCheckpointStorage;
 import org.apache.flink.streaming.api.operators.sorted.state.BatchExecutionInternalTimeServiceManager;
@@ -266,8 +265,48 @@ public class StreamGraphGenerator {
 
         setFineGrainedGlobalStreamExchangeMode(streamGraph);
 
-        LineageGraph lineageGraph = LineageGraphUtils.convertToLineageGraph(transformations);
-        streamGraph.setLineageGraph(lineageGraph);
+        streamGraph.setLineageGraph(LineageGraphUtils.observe(transformations));
+        org.apache.flink.streaming.api.lineage.LineageGraphObservation observation =
+                (org.apache.flink.streaming.api.lineage.LineageGraphObservation)
+                        streamGraph.getLineageGraph();
+        streamGraph
+                .getJobConfiguration()
+                .setString(
+                        org.apache.flink.core.execution.DefaultJobExecutionStatusEvent
+                                .LINEAGE_TABLE_STATUS,
+                        observation.getTableStatus());
+        streamGraph
+                .getJobConfiguration()
+                .setString(
+                        org.apache.flink.core.execution.DefaultJobExecutionStatusEvent
+                                .LINEAGE_COLUMN_STATUS,
+                        observation.getColumnStatus());
+        streamGraph
+                .getJobConfiguration()
+                .setString(
+                        org.apache.flink.core.execution.DefaultJobExecutionStatusEvent
+                                .LINEAGE_ISSUES,
+                        String.join("\n", observation.getIssues()));
+        try {
+            streamGraph
+                    .getJobConfiguration()
+                    .setString(
+                            org.apache.flink.core.execution.DefaultJobExecutionStatusEvent
+                                    .LINEAGE_TABLE_STATUSES,
+                            org.apache.flink.util.jackson.JacksonMapperFactory.createObjectMapper()
+                                    .writeValueAsString(observation.getTableStatuses()));
+            streamGraph
+                    .getJobConfiguration()
+                    .setString(
+                            org.apache.flink.core.execution.DefaultJobExecutionStatusEvent
+                                    .LINEAGE_COLUMN_STATUSES,
+                            org.apache.flink.util.jackson.JacksonMapperFactory.createObjectMapper()
+                                    .writeValueAsString(observation.getColumnStatuses()));
+        } catch (org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException
+                | RuntimeException failure) {
+            LOG.warn(
+                    "Could not transfer per-dataset lineage status; execution continues.", failure);
+        }
 
         for (StreamNode node : streamGraph.getStreamNodes()) {
             if (node.getInEdges().stream()

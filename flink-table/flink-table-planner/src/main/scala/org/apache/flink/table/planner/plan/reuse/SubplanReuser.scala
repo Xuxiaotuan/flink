@@ -21,6 +21,7 @@ import org.apache.flink.configuration.ReadableConfig
 import org.apache.flink.table.api.TableException
 import org.apache.flink.table.api.config.OptimizerConfigOptions
 import org.apache.flink.table.planner.calcite.{FlinkContext, FlinkTypeFactory}
+import org.apache.flink.table.planner.lineage.PlannerColumnLineagePlanBinder
 import org.apache.flink.table.planner.plan.nodes.calcite.{LegacySink, Sink}
 import org.apache.flink.table.planner.plan.nodes.logical.{FlinkLogicalLegacyTableSourceScan, FlinkLogicalTableSourceScan}
 import org.apache.flink.table.planner.plan.nodes.physical.common.{CommonPhysicalLegacyTableSourceScan, CommonPhysicalTableSourceScan}
@@ -57,7 +58,23 @@ object SubplanReuser {
       tableConfig: ReadableConfig,
       flinkContext: FlinkContext,
       flinkTypeFactory: FlinkTypeFactory): Seq[RelNode] = {
+    reuseDuplicatedSubplan(rels, tableConfig, flinkContext, flinkTypeFactory, null)
+  }
+
+  /** Finds duplicated sub-plans and carries lineage through the same reuse decisions. */
+  def reuseDuplicatedSubplan(
+      rels: Seq[RelNode],
+      tableConfig: ReadableConfig,
+      flinkContext: FlinkContext,
+      flinkTypeFactory: FlinkTypeFactory,
+      lineage: PlannerColumnLineagePlanBinder): Seq[RelNode] = {
+    if (lineage != null) {
+      lineage.bindPhysicalRoots(rels)
+    }
     if (!tableConfig.get(OptimizerConfigOptions.TABLE_OPTIMIZER_REUSE_SUB_PLAN_ENABLED)) {
+      if (lineage != null) {
+        lineage.finishRoots(rels)
+      }
       return rels
     }
     val tableSourceReuseEnabled =
@@ -69,15 +86,23 @@ object SubplanReuser {
     var newRels = rels
     if (tableSourceReuseEnabled) {
       newRels = new ScanReuser(flinkContext, flinkTypeFactory).reuseDuplicatedScan(rels)
+      if (lineage != null) {
+        lineage.transferRoots(rels, newRels)
+      }
     }
 
     if (tableSinkReuseEnabled) {
-      newRels = new SinkReuser(!flinkContext.isBatchMode).reuseDuplicatedSink(newRels)
+      newRels = new SinkReuser(!flinkContext.isBatchMode, lineage).reuseDuplicatedSink(newRels)
     }
 
     val context = new SubplanReuseContext(tableSourceReuseEnabled, newRels: _*)
     val reuseShuttle = new SubplanReuseShuttle(context)
-    newRels.map(_.accept(reuseShuttle))
+    val result = newRels.map(_.accept(reuseShuttle))
+    if (lineage != null) {
+      lineage.transferRoots(newRels, result)
+      lineage.finishRoots(result)
+    }
+    result
   }
 
   /**

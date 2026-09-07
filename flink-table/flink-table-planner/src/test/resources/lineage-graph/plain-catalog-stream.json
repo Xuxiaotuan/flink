@@ -1,56 +1,134 @@
 {
-  "lineageEdges" : [ {
-    "sourceLineageVertex" : {
-      "datasets" : [ {
-        "name" : "MyPlainCat.MyDatabase.Src",
-        "namespace" : "values://FromElementsFunction",
-        "objectPath" : {
-          "databaseName" : "MyDatabase",
-          "objectName" : "Src",
-          "fullName" : "MyDatabase.Src"
-        },
-        "facets" : { }
-      } ],
-      "boundedness" : "CONTINUOUS_UNBOUNDED"
-    },
-    "sinkVertex" : {
-      "datasets" : [ {
-        "name" : "MyPlainCat.MyDatabase.Snk",
-        "namespace" : "values://AppendingSinkFunction",
-        "objectPath" : {
-          "databaseName" : "MyDatabase",
-          "objectName" : "Snk",
-          "fullName" : "MyDatabase.Snk"
-        },
-        "facets" : { }
-      } ],
-      "modifyType" : "INSERT"
+  "lineageEdges": [
+    {
+      "sourceLineageVertex": {
+        "datasets": [
+          {
+            "name": "`MyPlainCat`.`MyDatabase`.`Src`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "MyDatabase",
+              "objectName": "Src",
+              "fullName": "MyDatabase.Src"
+            },
+            "facets": {}
+          }
+        ],
+        "boundedness": "CONTINUOUS_UNBOUNDED"
+      },
+      "sinkVertex": {
+        "datasets": [
+          {
+            "name": "`MyPlainCat`.`MyDatabase`.`Snk`",
+            "namespace": "values://AppendingSinkFunction",
+            "objectPath": {
+              "databaseName": "MyDatabase",
+              "objectName": "Snk",
+              "fullName": "MyDatabase.Snk"
+            },
+            "facets": {}
+          }
+        ],
+        "modifyType": "INSERT"
+      }
     }
-  } ],
-  "sources" : [ {
-    "datasets" : [ {
-      "name" : "MyPlainCat.MyDatabase.Src",
-      "namespace" : "values://FromElementsFunction",
-      "objectPath" : {
-        "databaseName" : "MyDatabase",
-        "objectName" : "Src",
-        "fullName" : "MyDatabase.Src"
+  ],
+  "sources": [
+    {
+      "datasets": [
+        {
+          "name": "`MyPlainCat`.`MyDatabase`.`Src`",
+          "namespace": "values://FromElementsFunction",
+          "objectPath": {
+            "databaseName": "MyDatabase",
+            "objectName": "Src",
+            "fullName": "MyDatabase.Src"
+          },
+          "facets": {}
+        }
+      ],
+      "boundedness": "CONTINUOUS_UNBOUNDED"
+    }
+  ],
+  "sinks": [
+    {
+      "datasets": [
+        {
+          "name": "`MyPlainCat`.`MyDatabase`.`Snk`",
+          "namespace": "values://AppendingSinkFunction",
+          "objectPath": {
+            "databaseName": "MyDatabase",
+            "objectName": "Snk",
+            "fullName": "MyDatabase.Snk"
+          },
+          "facets": {}
+        }
+      ],
+      "modifyType": "INSERT"
+    }
+  ],
+  "columnLineageRelations": [
+    {
+      "outputDataset": {
+        "name": "`MyPlainCat`.`MyDatabase`.`Snk`",
+        "namespace": "values://AppendingSinkFunction",
+        "objectPath": {
+          "databaseName": "MyDatabase",
+          "objectName": "Snk",
+          "fullName": "MyDatabase.Snk"
+        },
+        "facets": {}
       },
-      "facets" : { }
-    } ],
-    "boundedness" : "CONTINUOUS_UNBOUNDED"
-  } ],
-  "sinks" : [ {
-    "datasets" : [ {
-      "name" : "MyPlainCat.MyDatabase.Snk",
-      "namespace" : "values://AppendingSinkFunction",
-      "objectPath" : {
-        "databaseName" : "MyDatabase",
-        "objectName" : "Snk",
-        "fullName" : "MyDatabase.Snk"
+      "outputField": "b",
+      "inputs": [
+        {
+          "inputDataset": {
+            "name": "`MyPlainCat`.`MyDatabase`.`Src`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "MyDatabase",
+              "objectName": "Src",
+              "fullName": "MyDatabase.Src"
+            },
+            "facets": {}
+          },
+          "inputField": "b",
+          "dependencyType": "DIRECT"
+        }
+      ],
+      "origin": "INPUT_FIELDS",
+      "transformation": null
+    },
+    {
+      "outputDataset": {
+        "name": "`MyPlainCat`.`MyDatabase`.`Snk`",
+        "namespace": "values://AppendingSinkFunction",
+        "objectPath": {
+          "databaseName": "MyDatabase",
+          "objectName": "Snk",
+          "fullName": "MyDatabase.Snk"
+        },
+        "facets": {}
       },
-      "facets" : { }
-    } ],
-    "modifyType" : "INSERT"
-  } ]
+      "outputField": "a",
+      "inputs": [
+        {
+          "inputDataset": {
+            "name": "`MyPlainCat`.`MyDatabase`.`Src`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "MyDatabase",
+              "objectName": "Src",
+              "fullName": "MyDatabase.Src"
+            },
+            "facets": {}
+          },
+          "inputField": "a",
+          "dependencyType": "DIRECT"
+        }
+      ],
+      "origin": "INPUT_FIELDS",
+      "transformation": null
+    }
+  ]
 }

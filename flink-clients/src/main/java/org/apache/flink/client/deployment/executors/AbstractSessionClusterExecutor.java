@@ -19,6 +19,7 @@
 package org.apache.flink.client.deployment.executors;
 
 import org.apache.flink.annotation.Internal;
+import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.dag.Pipeline;
 import org.apache.flink.client.ClientUtils;
 import org.apache.flink.client.deployment.ClusterClientFactory;
@@ -101,9 +102,20 @@ public class AbstractSessionClusterExecutor<
                     clusterDescriptor.retrieve(clusterID);
             ClusterClient<ClusterID> clusterClient = clusterClientProvider.getClusterClient();
 
-            streamGraph.serializeUserDefinedInstances();
-            return clusterClient
-                    .submitJob(streamGraph)
+            final CompletableFuture<JobID> submission;
+            final String submissionId;
+            synchronized (streamGraph) {
+                streamGraph.serializeUserDefinedInstances();
+                submission = clusterClient.submitJob(streamGraph);
+                submissionId =
+                        streamGraph
+                                .getJobConfiguration()
+                                .getString(
+                                        org.apache.flink.core.execution.SubmissionIdentity
+                                                .CONFIG_KEY,
+                                        null);
+            }
+            return submission
                     .thenApplyAsync(
                             FunctionUtils.uncheckedFunction(
                                     jobId -> {
@@ -124,7 +136,10 @@ public class AbstractSessionClusterExecutor<
                             (jobClient, throwable) -> {
                                 if (throwable == null) {
                                     PipelineExecutorUtils.notifyJobStatusListeners(
-                                            pipeline, streamGraph, jobStatusChangedListeners);
+                                            pipeline,
+                                            streamGraph,
+                                            jobStatusChangedListeners,
+                                            submissionId);
                                 } else {
                                     LOG.error(
                                             "Failed to submit job graph to remote session cluster.",

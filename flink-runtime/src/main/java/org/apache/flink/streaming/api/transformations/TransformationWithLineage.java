@@ -22,6 +22,10 @@ import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.streaming.api.lineage.LineageVertex;
+import org.apache.flink.streaming.api.lineage.LineageVertexProvider;
+import org.apache.flink.streaming.api.lineage.TransformationColumnLineage;
+
+import javax.annotation.Nullable;
 
 /**
  * A {@link Transformation} that contains lineage information.
@@ -32,6 +36,9 @@ import org.apache.flink.streaming.api.lineage.LineageVertex;
 @Internal
 public abstract class TransformationWithLineage<T> extends PhysicalTransformation<T> {
     private LineageVertex lineageVertex;
+    private @Nullable TransformationColumnLineage columnLineage;
+    private @Nullable org.apache.flink.streaming.api.lineage.TransformationTableLineage
+            tableLineage;
 
     /**
      * Creates a new {@code Transformation} with the given name, output type and parallelism.
@@ -71,5 +78,41 @@ public abstract class TransformationWithLineage<T> extends PhysicalTransformatio
     /** Change the lineage vertex of this {@code Transformation}. */
     public void setLineageVertex(LineageVertex lineageVertex) {
         this.lineageVertex = lineageVertex;
+    }
+
+    /** Reads optional connector metadata without failing the execution transformation. */
+    public void extractLineageVertex(Object provider) {
+        if (provider instanceof LineageVertexProvider) {
+            try {
+                setLineageVertex(((LineageVertexProvider) provider).getLineageVertex());
+            } catch (RuntimeException error) {
+                setLineageFailure(error.getClass().getSimpleName() + ": " + error.getMessage());
+                org.slf4j.LoggerFactory.getLogger(TransformationWithLineage.class)
+                        .warn(
+                                "Connector lineage observation failed; job execution continues.",
+                                error);
+            }
+        }
+    }
+
+    /** Returns complete column lineage when this is a Table/SQL sink transformation. */
+    @Nullable
+    public TransformationColumnLineage getColumnLineage() {
+        return columnLineage;
+    }
+
+    /** Attaches complete column lineage to a Table/SQL sink transformation. */
+    public void setColumnLineage(TransformationColumnLineage columnLineage) {
+        this.columnLineage = columnLineage;
+    }
+
+    @Nullable
+    public org.apache.flink.streaming.api.lineage.TransformationTableLineage getTableLineage() {
+        return tableLineage;
+    }
+
+    public void setTableLineage(
+            org.apache.flink.streaming.api.lineage.TransformationTableLineage tableLineage) {
+        this.tableLineage = tableLineage;
     }
 }

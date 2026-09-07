@@ -21,6 +21,7 @@ package org.apache.flink.streaming.api.lineage;
 
 import org.apache.flink.annotation.PublicEvolving;
 
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -37,4 +38,9 @@ public interface LineageGraph {
 
     /* lineage edges from sources to sinks. */
     List<LineageEdge> relations();
+
+    /** Column lineage relations grouped by output dataset field. */
+    default List<ColumnLineageRelation> columnRelations() {
+        return Collections.emptyList();
+    }
 }

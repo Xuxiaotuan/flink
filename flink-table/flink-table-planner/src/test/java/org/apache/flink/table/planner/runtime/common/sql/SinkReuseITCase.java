@@ -31,6 +31,7 @@ import org.apache.flink.testutils.junit.extensions.parameterized.Parameter;
 import org.apache.flink.testutils.junit.extensions.parameterized.ParameterizedTestExtension;
 import org.apache.flink.testutils.junit.extensions.parameterized.Parameters;
 import org.apache.flink.types.Row;
+import org.apache.flink.util.CloseableIterator;
 
 import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -92,6 +93,37 @@ public class SinkReuseITCase extends AbstractTestBase {
 
         createSinkTable("sink1", getSinkOptions());
         createSinkTable("sink2", getSinkOptions());
+    }
+
+    @TestTemplate
+    public void testAnonymousCollectSink() throws Exception {
+        setup(isBatch);
+        try (CloseableIterator<Row> rows =
+                tEnv.sqlQuery("SELECT * FROM source1").execute().collect()) {
+            assertThat(rows)
+                    .toIterable()
+                    .containsExactlyInAnyOrder(Row.of(1, 1.1d, "Tom"), Row.of(2, 1.2d, "Jerry"));
+        }
+    }
+
+    @TestTemplate
+    public void testDistinctSinksWithSameSummaryName() throws Exception {
+        setup(isBatch);
+        tEnv.executeSql("CREATE DATABASE `default_database.db`");
+        createSinkTable("db.sink", getSinkOptions());
+        tEnv.executeSql(
+                "CREATE TABLE `default_database.db`.`sink` (a INT, b DOUBLE, c STRING)"
+                        + " WITH ("
+                        + makeWithOptions(getSinkOptions())
+                        + ")");
+        StatementSet statementSet = tEnv.createStatementSet();
+        statementSet.addInsertSql("INSERT INTO `db.sink` SELECT * FROM source1");
+        statementSet.addInsertSql("INSERT INTO `default_database.db`.`sink` SELECT * FROM source2");
+        statementSet.execute().await();
+        assertThat(TestValuesTableFactory.getResultsAsStrings("db.sink"))
+                .containsExactlyInAnyOrder("+I[1, 1.1, Tom]", "+I[2, 1.2, Jerry]");
+        assertThat(TestValuesTableFactory.getResultsAsStrings("sink"))
+                .containsExactlyInAnyOrder("+I[1, 2.1, Alice]", "+I[2, 2.2, Bob]");
     }
 
     @TestTemplate

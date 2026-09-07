@@ -25,3 +25,47 @@ See also `org.apache.calcite.plan.RelRule` for detailed explanation from Calcite
 
 Unit tests verifying the JSON plan changes (e.g. Java tests in `org.apache.flink.table.planner.plan.nodes.exec.stream`) 
 can regenerate all the files setting the environment variable `PLAN_TEST_FORCE_OVERWRITE=true`.
+
+## Optional lineage metadata in compiled plans (fork POC)
+
+`DynamicTableSinkSpec.columnLineage` and `tableLineage` are independent,
+optional observation extensions. Each newly written extension uses
+`"formatVersion": 1`; this is not an ExecNode or state serializer version.
+The extensions are excluded from sink execution identity and do not change
+checkpoint/savepoint formats.
+
+Restoration accepts version 1 and the existing unversioned POC layout.
+Absent metadata remains absent. Unknown versions (including 0), malformed
+version values, or invalid extension contents discard only that extension.
+Executable plan parsing and validation remain unchanged: a malformed plan
+or invalid execution configuration still fails normally. Readers must not
+interpret missing metadata as a verified source-free query.
+
+Observation status is carried separately through job execution events, not
+inserted into the existing lineage graph JSON. Graph serialization retains
+`lineageEdges`, `columnLineageRelations`, `sources`, and `sinks` (empty optional
+column relations may be omitted). Dataset names use escaped catalog identifiers
+so names containing dots or backticks remain unambiguous.
+
+Per-output completeness covers every writer of that dataset. An independently
+verified output may retain exact table/column dependencies when another output
+is unavailable; unknown writer correspondence cannot be guessed. COMPLETE
+describes supported logical planner dependencies, not UDF internals, physical
+reads, or reliable delivery to an external collector.
+
+Sources eliminated by optimization retain their catalog table, schema, options,
+and logical field dependencies in a frozen snapshot. Snapshotting never requests
+a scan runtime provider or constructs a Source, InputFormat, or SourceFunction.
+If the existing DynamicTableSource exposes lineage metadata, that metadata can
+provide its namespace. Otherwise `flink://catalog/<catalog>` identifies a logical
+catalog dependency; it does not establish the connector's physical identity or
+prove any runtime read. Consumers may resolve physical identity from the frozen
+catalog options when their connector metadata contract supports it.
+Failure to obtain optional connector metadata is reported and retains this
+logical identity, rather than discarding known table and field dependencies.
+
+A live scan still uses its normal runtime lineage metadata. A live and an
+eliminated scan of the same logical table can therefore have different known
+namespaces; their dependencies remain attached to the appropriate writers.
+Restoring an older snapshot preserves its stored namespace without reinterpretation
+or runtime source construction. The snapshot layout and version are unchanged.

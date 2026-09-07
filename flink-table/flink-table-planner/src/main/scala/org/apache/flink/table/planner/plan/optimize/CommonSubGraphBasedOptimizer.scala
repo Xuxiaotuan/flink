@@ -17,6 +17,7 @@
  */
 package org.apache.flink.table.planner.plan.optimize
 
+import org.apache.flink.table.planner.lineage.PlannerColumnLineagePlanBinder
 import org.apache.flink.table.planner.plan.reuse.SubplanReuser
 import org.apache.flink.table.planner.plan.schema.IntermediateRelTable
 import org.apache.flink.table.planner.plan.utils.SameRelObjectShuttle
@@ -75,7 +76,11 @@ abstract class CommonSubGraphBasedOptimizer extends Optimizer {
    * @return
    *   a list of RelNode represents an optimized RelNode DAG.
    */
-  override def optimize(roots: Seq[RelNode]): Seq[RelNode] = {
+  override def optimize(roots: Seq[RelNode]): Seq[RelNode] = optimize(roots, null)
+
+  override def optimize(
+      roots: Seq[RelNode],
+      lineage: PlannerColumnLineagePlanBinder): Seq[RelNode] = {
     // resolve hints before optimizing
     val queryHintsResolver = new QueryHintsResolver()
     val resolvedHintRoots = queryHintsResolver.resolve(toJava(roots))
@@ -105,7 +110,8 @@ abstract class CommonSubGraphBasedOptimizer extends Optimizer {
       relsWithoutSameObj,
       unwrapTableConfig(roots.head),
       unwrapContext(roots.head),
-      unwrapTypeFactory(roots.head))
+      unwrapTypeFactory(roots.head),
+      lineage)
   }
 
   /**

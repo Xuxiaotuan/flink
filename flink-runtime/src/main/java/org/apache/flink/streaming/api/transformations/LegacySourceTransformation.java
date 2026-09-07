@@ -24,7 +24,6 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.connector.source.Boundedness;
 import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.streaming.api.functions.source.legacy.SourceFunction;
-import org.apache.flink.streaming.api.lineage.LineageVertexProvider;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.operators.SimpleOperatorFactory;
 import org.apache.flink.streaming.api.operators.StreamOperatorFactory;
@@ -111,8 +110,6 @@ public class LegacySourceTransformation<T> extends TransformationWithLineage<T>
 
     private void extractLineageVertex(StreamSource<T, ?> operator) {
         SourceFunction sourceFunction = operator.getUserFunction();
-        if (sourceFunction instanceof LineageVertexProvider) {
-            setLineageVertex(((LineageVertexProvider) sourceFunction).getLineageVertex());
-        }
+        extractLineageVertex(sourceFunction);
     }
 }

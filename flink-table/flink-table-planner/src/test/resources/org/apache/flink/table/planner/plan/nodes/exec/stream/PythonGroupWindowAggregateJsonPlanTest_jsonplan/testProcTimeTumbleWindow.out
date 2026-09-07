@@ -473,6 +473,69 @@
             "connector" : "values"
           }
         }
+      },
+      "columnLineage" : {
+        "sinkKey" : "`default_catalog`.`default_database`.`MySink`",
+        "expectedOutputFields" : [ "b", "window_end", "c" ],
+        "expectedSources" : [ {
+          "qualifiedName" : [ "default_catalog", "default_database", "MyTable" ]
+        } ],
+        "relations" : [ {
+          "outputField" : "b",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "MyTable" ]
+            },
+            "field" : "b",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "MyTable" ]
+            },
+            "field" : "b",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "GROUP_BY" ]
+        }, {
+          "outputField" : "window_end",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "MyTable" ]
+            },
+            "field" : "b",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "SYSTEM",
+          "transformations" : [ "UDF", "EXPRESSION", "GROUP_BY" ]
+        }, {
+          "outputField" : "c",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "MyTable" ]
+            },
+            "field" : "a",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "MyTable" ]
+            },
+            "field" : "b",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "EXPRESSION", "AGGREGATION", "GROUP_BY" ]
+        } ],
+        "prunedSources" : [ ],
+        "formatVersion" : 1
+      },
+      "tableLineage" : {
+        "sinkKey" : "`default_catalog`.`default_database`.`MySink`",
+        "expectedSources" : [ {
+          "qualifiedName" : [ "default_catalog", "default_database", "MyTable" ]
+        } ],
+        "prunedSources" : [ ],
+        "formatVersion" : 1
       }
     },
     "inputChangelogMode" : [ "INSERT" ],

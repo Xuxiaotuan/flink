@@ -1326,7 +1326,7 @@ public final class DynamicSinkUtils {
      *
      * <p>The format looks as follows: {@code PHYSICAL COLUMNS + PERSISTED METADATA COLUMNS}
      */
-    private static RowType createConsumedType(ResolvedSchema schema, DynamicTableSink sink) {
+    public static RowType createConsumedType(ResolvedSchema schema, DynamicTableSink sink) {
         final Map<String, DataType> metadataMap = extractMetadataMap(sink);
 
         final Stream<RowField> physicalFields =
@@ -1352,6 +1352,11 @@ public final class DynamicSinkUtils {
                 Stream.concat(physicalFields, metadataFields).collect(Collectors.toList());
 
         return new RowType(false, rowFields);
+    }
+
+    /** Returns whether this is an internal client-result or Table-to-DataStream sink. */
+    public static boolean isInternalSinkWithoutLineage(DynamicTableSink sink) {
+        return sink instanceof CollectDynamicSink || sink instanceof ExternalDynamicSink;
     }
 
     private DynamicSinkUtils() {
