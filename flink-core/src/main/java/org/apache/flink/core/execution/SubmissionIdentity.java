@@ -25,9 +25,9 @@ import javax.annotation.Nullable;
 /**
  * Internal identity shared by client and runtime observations of one submission.
  *
- * <p>A client submission call assigns a fresh ID before taking the submitted plan snapshot. Transport
- * retries and recovery use that snapshot's configuration without rotating the ID. The ID does not
- * replace JobID or change the dispatcher's duplicate-job rules.
+ * <p>A client submission call assigns a fresh ID before taking the submitted plan snapshot.
+ * Transport retries and recovery use that snapshot's configuration without rotating the ID. The ID
+ * does not replace JobID or change the dispatcher's duplicate-job rules.
  */
 @Internal
 public interface SubmissionIdentity extends JobStatusChangedEvent {
