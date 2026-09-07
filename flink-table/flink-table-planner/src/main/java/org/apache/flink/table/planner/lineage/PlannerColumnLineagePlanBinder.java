@@ -19,12 +19,8 @@
 package org.apache.flink.table.planner.lineage;
 
 import org.apache.flink.annotation.Internal;
-import org.apache.flink.legacy.table.connector.source.SourceFunctionProvider;
-import org.apache.flink.streaming.api.lineage.LineageVertex;
 import org.apache.flink.table.api.config.TableConfigOptions;
-import org.apache.flink.table.connector.source.InputFormatProvider;
 import org.apache.flink.table.connector.source.ScanTableSource;
-import org.apache.flink.table.connector.source.SourceProvider;
 import org.apache.flink.table.operations.CollectModifyOperation;
 import org.apache.flink.table.operations.ExternalModifyOperation;
 import org.apache.flink.table.operations.ModifyOperation;
@@ -36,7 +32,6 @@ import org.apache.flink.table.planner.plan.nodes.exec.ExecNode;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeGraph;
 import org.apache.flink.table.planner.plan.nodes.exec.common.CommonExecSink;
 import org.apache.flink.table.planner.plan.schema.TableSourceTable;
-import org.apache.flink.table.runtime.connector.source.ScanRuntimeProviderContext;
 
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.TableScan;
@@ -404,34 +399,24 @@ public final class PlannerColumnLineagePlanBinder {
             throw failure(
                     "<unknown>", "<unknown>", "cannot snapshot pruned non-scan source: " + dataset);
         }
-        final ScanTableSource.ScanRuntimeProvider provider =
-                ((ScanTableSource) source.tableSource())
-                        .getScanRuntimeProvider(ScanRuntimeProviderContext.INSTANCE);
-        final Optional<LineageVertex> vertex;
-        if (provider instanceof SourceProvider) {
-            vertex =
-                    TableLineageUtils.extractLineageDataset(
-                            ((SourceProvider) provider).createSource());
-        } else if (provider instanceof InputFormatProvider) {
-            vertex =
-                    TableLineageUtils.extractLineageDataset(
-                            ((InputFormatProvider) provider).createInputFormat());
-        } else if (provider instanceof SourceFunctionProvider) {
-            vertex =
-                    TableLineageUtils.extractLineageDataset(
-                            ((SourceFunctionProvider) provider).createSourceFunction());
-        } else {
-            throw failure(
-                    "<unknown>",
-                    "<unknown>",
-                    "cannot snapshot pruned source provider without executing it: "
-                            + provider.getClass().getName());
+        // An eliminated scan has no runtime source. Use only metadata already exposed by the
+        // table source; otherwise retain its logical catalog identity and frozen schema.
+        String namespace;
+        try {
+            namespace =
+                    TableLineageUtils.createTableLineageDataset(
+                                    source.contextResolvedTable(),
+                                    TableLineageUtils.extractLineageDataset(source.tableSource()))
+                            .namespace();
+        } catch (RuntimeException error) {
+            report("Unable to obtain connector identity for pruned source " + dataset, error);
+            namespace =
+                    TableLineageUtils.createTableLineageDataset(
+                                    source.contextResolvedTable(), Optional.empty())
+                            .namespace();
         }
         return new PlannerPrunedSource(
-                dataset,
-                TableLineageUtils.createTableLineageDataset(source.contextResolvedTable(), vertex)
-                        .namespace(),
-                source.contextResolvedTable().getResolvedTable());
+                dataset, namespace, source.contextResolvedTable().getResolvedTable());
     }
 
     private static List<TableSourceTable> collectSourceTables(List<RelNode> roots) {

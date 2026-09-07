@@ -52,3 +52,20 @@ verified output may retain exact table/column dependencies when another output
 is unavailable; unknown writer correspondence cannot be guessed. COMPLETE
 describes supported logical planner dependencies, not UDF internals, physical
 reads, or reliable delivery to an external collector.
+
+Sources eliminated by optimization retain their catalog table, schema, options,
+and logical field dependencies in a frozen snapshot. Snapshotting never requests
+a scan runtime provider or constructs a Source, InputFormat, or SourceFunction.
+If the existing DynamicTableSource exposes lineage metadata, that metadata can
+provide its namespace. Otherwise `flink://catalog/<catalog>` identifies a logical
+catalog dependency; it does not establish the connector's physical identity or
+prove any runtime read. Consumers may resolve physical identity from the frozen
+catalog options when their connector metadata contract supports it.
+Failure to obtain optional connector metadata is reported and retains this
+logical identity, rather than discarding known table and field dependencies.
+
+A live scan still uses its normal runtime lineage metadata. A live and an
+eliminated scan of the same logical table can therefore have different known
+namespaces; their dependencies remain attached to the appropriate writers.
+Restoring an older snapshot preserves its stored namespace without reinterpretation
+or runtime source construction. The snapshot layout and version are unchanged.

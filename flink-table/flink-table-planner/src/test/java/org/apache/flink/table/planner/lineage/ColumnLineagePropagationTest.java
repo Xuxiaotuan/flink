@@ -21,9 +21,13 @@ package org.apache.flink.table.planner.lineage;
 import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.streaming.api.lineage.ColumnLineageInput;
 import org.apache.flink.streaming.api.lineage.ColumnLineageRelation;
+import org.apache.flink.streaming.api.lineage.DefaultLineageDataset;
 import org.apache.flink.streaming.api.lineage.LineageGraph;
 import org.apache.flink.streaming.api.lineage.LineageGraphObservation;
 import org.apache.flink.streaming.api.lineage.LineageGraphUtils;
+import org.apache.flink.streaming.api.lineage.LineageUtils;
+import org.apache.flink.streaming.api.lineage.LineageVertex;
+import org.apache.flink.streaming.api.lineage.LineageVertexProvider;
 import org.apache.flink.streaming.api.lineage.SourceLineageVertex;
 import org.apache.flink.streaming.api.transformations.PartitionTransformation;
 import org.apache.flink.streaming.api.transformations.TransformationWithLineage;
@@ -44,6 +48,8 @@ import org.apache.flink.table.catalog.ObjectIdentifier;
 import org.apache.flink.table.connector.ChangelogMode;
 import org.apache.flink.table.connector.sink.DynamicTableSink;
 import org.apache.flink.table.connector.sink.TransformationSinkProvider;
+import org.apache.flink.table.connector.source.DynamicTableSource;
+import org.apache.flink.table.connector.source.ScanTableSource;
 import org.apache.flink.table.operations.ModifyOperation;
 import org.apache.flink.table.operations.OutputConversionModifyOperation;
 import org.apache.flink.table.planner.delegation.PlannerBase;
@@ -64,6 +70,7 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.groups.Tuple.tuple;
 
 /** Tests complete column lineage propagation through direct and compiled-plan translation. */
 class ColumnLineagePropagationTest {
@@ -313,8 +320,73 @@ class ColumnLineagePropagationTest {
                                         .get(0)
                                         .inputDataset()
                                         .namespace())
-                        .startsWith("values://");
+                        .isEqualTo("flink://catalog/default_catalog");
             }
+        }
+    }
+
+    @Test
+    void testPrunedSourceDoesNotRequestRuntimeProvider() throws Exception {
+        assertPrunedSourceMetadata(MetadataOnlySource.class, "flink://catalog/default_catalog");
+    }
+
+    @Test
+    void testPrunedSourceUsesExistingLineageMetadataWithoutRuntimeProvider() throws Exception {
+        assertPrunedSourceMetadata(KnownMetadataSource.class, "test://known-source");
+    }
+
+    @Test
+    void testPrunedSourceMetadataFailurePreservesLogicalDependencies() throws Exception {
+        assertPrunedSourceMetadata(FailingMetadataSource.class, "flink://catalog/default_catalog");
+    }
+
+    private static void assertPrunedSourceMetadata(
+            Class<? extends MetadataOnlySource> sourceClass, String expectedNamespace)
+            throws Exception {
+        for (boolean compiled : new boolean[] {false, true}) {
+            final TableEnvironmentImpl environment = createEnvironment();
+            environment.dropTemporaryTable("LineageSource");
+            environment.createTemporaryTable(
+                    "LineageSource",
+                    TableDescriptor.forConnector("values")
+                            .schema(Schema.newBuilder().column("value", DataTypes.BIGINT()).build())
+                            .option("table-source-class", sourceClass.getName())
+                            .build());
+            MetadataOnlySource.runtimeProviderCalls = 0;
+            final String sql = INSERT_SQL + " WHERE 1=0";
+            final List<Transformation<?>> transformations;
+            if (compiled) {
+                final String json = environment.compilePlanSql(sql).asJsonString();
+                environment.dropTemporaryTable("LineageSource");
+                transformations =
+                        CompiledPlanUtils.toTransformations(
+                                environment,
+                                environment.loadPlan(PlanReference.fromJsonString(json)));
+            } else {
+                transformations =
+                        environment
+                                .getPlanner()
+                                .translate(
+                                        Collections.singletonList(
+                                                (ModifyOperation)
+                                                        environment.getParser().parse(sql).get(0)));
+            }
+            assertThat(MetadataOnlySource.runtimeProviderCalls).isZero();
+            assertThat(transformations).isNotEmpty();
+            final LineageGraphObservation observation = LineageGraphUtils.observe(transformations);
+            assertThat(observation.getTableStatus()).isEqualTo("COMPLETE");
+            assertThat(observation.getColumnStatus()).isEqualTo("COMPLETE");
+            assertThat(observation.sources())
+                    .flatExtracting(SourceLineageVertex::datasets)
+                    .extracting(dataset -> dataset.namespace(), dataset -> dataset.name())
+                    .containsExactly(
+                            tuple(
+                                    expectedNamespace,
+                                    "`default_catalog`.`default_database`.`LineageSource`"));
+            assertThat(observation.columnRelations())
+                    .flatExtracting(ColumnLineageRelation::inputs)
+                    .extracting(ColumnLineageInput::inputField)
+                    .containsExactly("value");
         }
     }
 
@@ -341,6 +413,90 @@ class ColumnLineagePropagationTest {
                 .containsExactlyInAnyOrder(
                         identifier("LineageSource").asSerializableString(),
                         identifier("LiveSource").asSerializableString());
+    }
+
+    @Test
+    void testSameSourceLiveAndPrunedWritersKeepDistinctKnownIdentities() throws Exception {
+        for (boolean compiled : new boolean[] {false, true}) {
+            final TableEnvironmentImpl environment = createEnvironment();
+            createValuesTable(environment, "LiveSink", "result");
+            final StatementSet statements = environment.createStatementSet();
+            final List<ModifyOperation> operations = new ArrayList<>();
+            for (String sql :
+                    new String[] {
+                        INSERT_SQL + " WHERE 1=0",
+                        "INSERT INTO LiveSink SELECT `value` FROM LineageSource"
+                    }) {
+                if (compiled) {
+                    statements.addInsertSql(sql);
+                } else {
+                    operations.add((ModifyOperation) environment.getParser().parse(sql).get(0));
+                }
+            }
+            final List<Transformation<?>> transformations =
+                    compiled
+                            ? CompiledPlanUtils.toTransformations(
+                                    environment,
+                                    environment.loadPlan(
+                                            PlanReference.fromJsonString(
+                                                    statements.compilePlan().asJsonString())))
+                            : environment.getPlanner().translate(operations);
+            final LineageGraphObservation observation = LineageGraphUtils.observe(transformations);
+            assertThat(observation.getTableStatus()).isEqualTo("COMPLETE");
+            assertThat(observation.getColumnStatus()).isEqualTo("COMPLETE");
+            assertThat(observation.columnRelations())
+                    .extracting(relation -> relation.outputDataset().name())
+                    .containsExactlyInAnyOrder(
+                            identifier("LineageSink").asSerializableString(),
+                            identifier("LiveSink").asSerializableString());
+            for (ColumnLineageRelation relation : observation.columnRelations()) {
+                assertThat(relation.outputField()).isEqualTo("result");
+                assertThat(relation.inputs()).hasSize(1);
+                final ColumnLineageInput input = relation.inputs().get(0);
+                assertThat(input.inputDataset().name())
+                        .isEqualTo("`default_catalog`.`default_database`.`LineageSource`");
+                assertThat(input.inputField()).isEqualTo("value");
+                if (relation.outputDataset()
+                        .name()
+                        .equals(identifier("LineageSink").asSerializableString())) {
+                    assertThat(input.inputDataset().namespace())
+                            .isEqualTo("flink://catalog/default_catalog");
+                } else {
+                    assertThat(input.inputDataset().namespace()).startsWith("values://");
+                }
+            }
+        }
+    }
+
+    @Test
+    void testRestoredPrunedSourcePreservesHistoricalSnapshotNamespace() throws Exception {
+        final TableEnvironmentImpl environment = createEnvironment();
+        final ObjectMapper mapper = new ObjectMapper();
+        final JsonNode json =
+                mapper.readTree(
+                        environment.compilePlanSql(INSERT_SQL + " WHERE 1=0").asJsonString());
+        final List<JsonNode> snapshots = json.findValues("prunedSources");
+        assertThat(snapshots).isNotEmpty();
+        for (JsonNode snapshotsForSink : snapshots) {
+            assertThat(snapshotsForSink).hasSize(1);
+            ((ObjectNode) snapshotsForSink.get(0)).put("namespace", "values://historical-source");
+        }
+        environment.dropTemporaryTable("LineageSource");
+        final LineageGraph graph =
+                LineageGraphUtils.convertToLineageGraph(
+                        CompiledPlanUtils.toTransformations(
+                                environment,
+                                environment.loadPlan(
+                                        PlanReference.fromJsonString(
+                                                mapper.writeValueAsString(json)))));
+        assertThat(graph.sources())
+                .flatExtracting(SourceLineageVertex::datasets)
+                .extracting(dataset -> dataset.namespace())
+                .containsExactly("values://historical-source");
+        assertThat(graph.columnRelations())
+                .flatExtracting(ColumnLineageRelation::inputs)
+                .extracting(input -> input.inputDataset().namespace())
+                .containsExactly("values://historical-source");
     }
 
     @Test
@@ -1055,6 +1211,62 @@ class ColumnLineagePropagationTest {
                 .isEqualTo(directInput.inputField())
                 .isEqualTo("value");
         assertThat(compiledInput.dependencyType()).isEqualTo(directInput.dependencyType());
+    }
+
+    /** A source whose runtime is unavailable; an eliminated scan must never request it. */
+    public static class MetadataOnlySource implements ScanTableSource {
+        private static int runtimeProviderCalls;
+
+        @Override
+        public ChangelogMode getChangelogMode() {
+            return ChangelogMode.insertOnly();
+        }
+
+        @Override
+        public ScanRuntimeProvider getScanRuntimeProvider(ScanContext context) {
+            runtimeProviderCalls++;
+            throw new UnsupportedOperationException("Runtime provider must not be requested");
+        }
+
+        @Override
+        public DynamicTableSource copy() {
+            return new MetadataOnlySource();
+        }
+
+        @Override
+        public String asSummaryString() {
+            return "metadata-only";
+        }
+    }
+
+    /** Connector metadata already exists on the logical source. */
+    public static final class KnownMetadataSource extends MetadataOnlySource
+            implements LineageVertexProvider {
+        @Override
+        public LineageVertex getLineageVertex() {
+            return LineageUtils.lineageVertexOf(
+                    new DefaultLineageDataset(
+                            "physical-source", "test://known-source", Collections.emptyMap()));
+        }
+
+        @Override
+        public DynamicTableSource copy() {
+            return new KnownMetadataSource();
+        }
+    }
+
+    /** Optional connector metadata cannot make an otherwise valid query fail. */
+    public static final class FailingMetadataSource extends MetadataOnlySource
+            implements LineageVertexProvider {
+        @Override
+        public LineageVertex getLineageVertex() {
+            throw new IllegalStateException("Metadata unavailable");
+        }
+
+        @Override
+        public DynamicTableSource copy() {
+            return new FailingMetadataSource();
+        }
     }
 
     /** Custom provider whose non-carrier result makes lineage unavailable, not execution. */
