@@ -24,6 +24,11 @@ import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.state.CheckpointListener;
 import org.apache.flink.api.common.typeinfo.IntegerTypeInfo;
 import org.apache.flink.api.connector.sink2.Committer;
+import org.apache.flink.api.connector.sink2.CommitterInitContext;
+import org.apache.flink.api.connector.sink2.CommittingSinkWriter;
+import org.apache.flink.api.connector.sink2.Sink;
+import org.apache.flink.api.connector.sink2.SupportsCommitter;
+import org.apache.flink.api.connector.sink2.WriterInitContext;
 import org.apache.flink.api.connector.source.Source;
 import org.apache.flink.api.connector.source.lib.NumberSequenceSource;
 import org.apache.flink.api.connector.source.util.ratelimit.GatedRateLimiter;
@@ -39,16 +44,27 @@ import org.apache.flink.configuration.RestartStrategyOptions;
 import org.apache.flink.configuration.StateBackendOptions;
 import org.apache.flink.configuration.StateRecoveryOptions;
 import org.apache.flink.connector.datagen.source.DataGeneratorSource;
+import org.apache.flink.core.io.SimpleVersionedSerializer;
+import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.runtime.messages.FlinkJobNotFoundException;
 import org.apache.flink.runtime.minicluster.MiniCluster;
 import org.apache.flink.runtime.testutils.CommonTestUtils;
+import org.apache.flink.streaming.api.connector.sink2.CommittableMessage;
+import org.apache.flink.streaming.api.connector.sink2.CommittableSummary;
+import org.apache.flink.streaming.api.connector.sink2.CommittableWithLineage;
+import org.apache.flink.streaming.api.connector.sink2.StandardSinkTopologies;
+import org.apache.flink.streaming.api.connector.sink2.SupportsPostCommitTopology;
+import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.graph.StreamEdge;
 import org.apache.flink.streaming.api.graph.StreamGraph;
 import org.apache.flink.streaming.api.graph.StreamNode;
+import org.apache.flink.streaming.runtime.operators.sink.CommitterOperatorFactory;
 import org.apache.flink.streaming.runtime.operators.sink.TestSinkV2;
 import org.apache.flink.streaming.runtime.operators.sink.TestSinkV2.Record;
 import org.apache.flink.streaming.runtime.operators.sink.TestSinkV2.RecordSerializer;
+import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
+import org.apache.flink.streaming.util.OneInputStreamOperatorTestHarness;
 import org.apache.flink.test.junit5.InjectClusterClient;
 import org.apache.flink.test.junit5.InjectMiniCluster;
 import org.apache.flink.test.util.AbstractTestBase;
@@ -64,13 +80,17 @@ import org.junit.jupiter.params.provider.CsvSource;
 import java.io.File;
 import java.io.Serializable;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Queue;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -157,6 +177,42 @@ class SinkV2ITCase extends AbstractTestBase {
         return r.withValue(-r.getValue());
     }
 
+    @Test
+    void scalingCommitterPreservesEqualValuesWhenReplayingCheckpoint() throws Exception {
+        final SharedReference<Queue<Committer.CommitRequest<Record<Integer>>>> committed =
+                SHARED_OBJECTS.add(new ConcurrentLinkedQueue<>());
+        final ScalingSink sink = new ScalingSink(committed);
+        final OperatorSubtaskState snapshot;
+        try (OneInputStreamOperatorTestHarness<
+                        CommittableMessage<Record<Integer>>, CommittableMessage<Record<Integer>>>
+                harness =
+                        new OneInputStreamOperatorTestHarness<>(
+                                new CommitterOperatorFactory<>(sink, false, true), 1, 1, 0)) {
+            harness.open();
+            harness.processElement(new StreamRecord<>(new CommittableSummary<>(0, 1, 0, 2, 0)));
+            for (int i = 0; i < 2; i++) {
+                harness.processElement(
+                        new StreamRecord<>(
+                                new CommittableWithLineage<>(
+                                        new IdentifiedRecord(148, null, Long.MIN_VALUE), 0, 0)));
+            }
+            snapshot = harness.snapshot(0, 0);
+            harness.notifyOfCompletedCheckpoint(0);
+        }
+        assertThat(committed.get()).hasSize(2);
+        try (OneInputStreamOperatorTestHarness<
+                        CommittableMessage<Record<Integer>>, CommittableMessage<Record<Integer>>>
+                restored =
+                        new OneInputStreamOperatorTestHarness<>(
+                                new CommitterOperatorFactory<>(sink, false, true), 1, 1, 0)) {
+            restored.initializeState(snapshot);
+            restored.open();
+            assertThat(committed.get())
+                    .extracting(request -> request.getCommittable().getValue())
+                    .containsExactly(148, 148);
+        }
+    }
+
     @ParameterizedTest
     @CsvSource({"1, 2", "2, 1", "1, 1"})
     void writerAndCommitterExecuteInStreamingModeWithScaling(
@@ -171,35 +227,34 @@ class SinkV2ITCase extends AbstractTestBase {
         try {
             SharedReference<Queue<Committer.CommitRequest<Record<Integer>>>> committed =
                     SHARED_OBJECTS.add(new ConcurrentLinkedQueue<>());
-            final TrackingCommitter trackingCommitter = new TrackingCommitter(committed);
+            final ScalingSink sink = new ScalingSink(committed);
             final Configuration config =
                     createConfigForScalingTest(checkpointDir, initialParallelism);
 
             // first run
             final JobID jobID =
                     runStreamingWithScalingTest(
-                            config,
-                            initialParallelism,
-                            trackingCommitter,
-                            true,
-                            miniCluster,
-                            clusterClient);
+                            config, initialParallelism, sink, true, miniCluster, clusterClient);
 
             // second run
             config.set(StateRecoveryOptions.SAVEPOINT_PATH, getCheckpointPath(miniCluster, jobID));
             config.set(CoreOptions.DEFAULT_PARALLELISM, scaledParallelism);
             runStreamingWithScalingTest(
-                    config,
-                    initialParallelism,
-                    trackingCommitter,
-                    false,
-                    miniCluster,
-                    clusterClient);
+                    config, initialParallelism, sink, false, miniCluster, clusterClient);
 
             assertThat(committed.get())
-                    .extracting(Committer.CommitRequest::getCommittable)
+                    .extracting(
+                            request -> {
+                                final Record<Integer> record = request.getCommittable();
+                                return new Record<>(
+                                        record.getValue(),
+                                        record.getTimestamp(),
+                                        record.getWatermark());
+                            })
                     .containsExactlyInAnyOrderElementsOf(
                             duplicate(EXPECTED_COMMITTED_DATA_IN_STREAMING_MODE));
+            assertThat(sink.locallyCommitted.get()).hasSize(40);
+            assertThat(sink.globallyCommitted.get()).hasSize(40);
         } finally {
             FileUtils.deleteDirectoryQuietly(checkpointDir);
         }
@@ -303,7 +358,7 @@ class SinkV2ITCase extends AbstractTestBase {
     private JobID runStreamingWithScalingTest(
             Configuration config,
             int parallelism,
-            TrackingCommitter trackingCommitter,
+            ScalingSink sink,
             boolean shouldMapperFail,
             MiniCluster miniCluster,
             ClusterClient<?> clusterClient)
@@ -316,11 +371,7 @@ class SinkV2ITCase extends AbstractTestBase {
                 .map(
                         new FailingCheckpointMapper(
                                 SHARED_OBJECTS.add(new AtomicBoolean(!shouldMapperFail))))
-                .sinkTo(
-                        TestSinkV2.<Integer>newBuilder()
-                                .setCommitter(trackingCommitter, RecordSerializer::new)
-                                .setWithPostCommitTopology(true)
-                                .build());
+                .sinkTo(sink);
 
         final JobID jobId = clusterClient.submitJob(env.getStreamGraph().getJobGraph()).get();
         clusterClient.requestJobResult(jobId).get();
@@ -406,6 +457,94 @@ class SinkV2ITCase extends AbstractTestBase {
         public void notifyCheckpointComplete(long checkpointId) {
             if (cooldown-- <= 0) {
                 rateLimiter.notifyCheckpointComplete(checkpointId);
+            }
+        }
+    }
+
+    private static class ScalingSink
+            implements Sink<Integer>,
+                    SupportsCommitter<Record<Integer>>,
+                    SupportsPostCommitTopology<Record<Integer>> {
+        private final SharedReference<Queue<Committer.CommitRequest<Record<Integer>>>> committed;
+        private final SharedReference<Set<UUID>> locallyCommitted =
+                SHARED_OBJECTS.add(ConcurrentHashMap.newKeySet());
+        private final SharedReference<Set<UUID>> globallyCommitted =
+                SHARED_OBJECTS.add(ConcurrentHashMap.newKeySet());
+
+        ScalingSink(SharedReference<Queue<Committer.CommitRequest<Record<Integer>>>> committed) {
+            this.committed = committed;
+        }
+
+        @Override
+        public IdentifiedSinkWriter createWriter(WriterInitContext context) {
+            return new IdentifiedSinkWriter();
+        }
+
+        @Override
+        public Committer<Record<Integer>> createCommitter(CommitterInitContext context) {
+            return new IdempotentTrackingCommitter(committed, locallyCommitted);
+        }
+
+        @Override
+        public SimpleVersionedSerializer<Record<Integer>> getCommittableSerializer() {
+            return new RecordSerializer<>();
+        }
+
+        @Override
+        public void addPostCommitTopology(DataStream<CommittableMessage<Record<Integer>>> input) {
+            StandardSinkTopologies.addGlobalCommitter(
+                    input,
+                    context -> new IdempotentTrackingCommitter(committed, globallyCommitted),
+                    RecordSerializer::new);
+        }
+    }
+
+    private static class IdentifiedRecord extends Record<Integer> {
+        // The serializer preserves this transaction identity when a checkpoint is replayed.
+        private final UUID id = UUID.randomUUID();
+
+        IdentifiedRecord(Integer value, Long timestamp, long watermark) {
+            super(value, timestamp, watermark);
+        }
+    }
+
+    private static class IdentifiedSinkWriter extends TestSinkV2.DefaultSinkWriter<Integer>
+            implements CommittingSinkWriter<Integer, Record<Integer>> {
+        @Override
+        public void write(Integer value, Context context) {
+            elements.add(
+                    new IdentifiedRecord(value, context.timestamp(), context.currentWatermark()));
+        }
+
+        @Override
+        public void flush(boolean endOfInput) {}
+
+        @Override
+        public Collection<Record<Integer>> prepareCommit() {
+            final List<Record<Integer>> result = elements;
+            elements = new ArrayList<>();
+            return result;
+        }
+    }
+
+    private static class IdempotentTrackingCommitter extends TrackingCommitter {
+        private final SharedReference<Set<UUID>> committedIds;
+
+        IdempotentTrackingCommitter(
+                SharedReference<Queue<CommitRequest<Record<Integer>>>> committed,
+                SharedReference<Set<UUID>> committedIds) {
+            super(committed);
+            this.committedIds = committedIds;
+        }
+
+        @Override
+        public void commit(Collection<CommitRequest<Record<Integer>>> committables) {
+            for (CommitRequest<Record<Integer>> request : committables) {
+                if (committedIds.get().add(((IdentifiedRecord) request.getCommittable()).id)) {
+                    super.commit(Collections.singletonList(request));
+                } else {
+                    request.signalAlreadyCommitted();
+                }
             }
         }
     }
