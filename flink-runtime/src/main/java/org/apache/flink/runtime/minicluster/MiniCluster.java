@@ -1097,18 +1097,28 @@ public class MiniCluster implements AutoCloseableAsync {
     }
 
     public CompletableFuture<JobSubmissionResult> submitJob(ExecutionPlan executionPlan) {
-        if (executionPlan instanceof StreamGraph) {
-            try {
-                ((StreamGraph) executionPlan).serializeUserDefinedInstances();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+        final ExecutionPlan clonedExecutionPlan;
+        synchronized (executionPlan) {
+            executionPlan
+                    .getJobConfiguration()
+                    .setString(
+                            org.apache.flink.core.execution.SubmissionIdentity.CONFIG_KEY,
+                            java.util.UUID.randomUUID().toString());
+            if (executionPlan instanceof StreamGraph) {
+                try {
+                    ((StreamGraph) executionPlan).serializeUserDefinedInstances();
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
             }
-        }
 
-        // When MiniCluster uses the local RPC, the provided ExecutionPlan is passed directly to the
-        // Dispatcher. This means that any mutations to the JG can affect the Dispatcher behaviour,
-        // so we rather clone it to guard against this.
-        final ExecutionPlan clonedExecutionPlan = InstantiationUtil.cloneUnchecked(executionPlan);
+            // When MiniCluster uses the local RPC, the provided ExecutionPlan is passed directly to
+            // the
+            // Dispatcher. This means that any mutations to the JG can affect the Dispatcher
+            // behaviour,
+            // so we rather clone it to guard against this.
+            clonedExecutionPlan = InstantiationUtil.cloneUnchecked(executionPlan);
+        }
         checkRestoreModeForChangelogStateBackend(clonedExecutionPlan);
         final CompletableFuture<DispatcherGateway> dispatcherGatewayFuture =
                 getDispatcherGatewayFuture();

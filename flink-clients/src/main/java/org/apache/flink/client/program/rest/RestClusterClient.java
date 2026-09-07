@@ -366,27 +366,29 @@ public class RestClusterClient<T> implements ClusterClient<T> {
 
     @Override
     public CompletableFuture<JobID> submitJob(@Nonnull ExecutionPlan executionPlan) {
-        CompletableFuture<java.nio.file.Path> executionPlanFileFuture =
-                CompletableFuture.supplyAsync(
-                        () -> {
-                            try {
-                                final java.nio.file.Path executionPlanFile =
-                                        Files.createTempFile(
-                                                "flink-executionPlan-" + executionPlan.getJobID(),
-                                                ".bin");
-                                try (ObjectOutputStream objectOut =
-                                        new ObjectOutputStream(
-                                                Files.newOutputStream(executionPlanFile))) {
-                                    objectOut.writeObject(executionPlan);
-                                }
-                                return executionPlanFile;
-                            } catch (IOException e) {
-                                throw new CompletionException(
-                                        new FlinkException(
-                                                "Failed to serialize ExecutionPlan.", e));
-                            }
-                        },
-                        executorService);
+        CompletableFuture<java.nio.file.Path> serializedPlanFuture;
+        synchronized (executionPlan) {
+            executionPlan
+                    .getJobConfiguration()
+                    .setString(
+                            org.apache.flink.core.execution.SubmissionIdentity.CONFIG_KEY,
+                            java.util.UUID.randomUUID().toString());
+            try {
+                final java.nio.file.Path executionPlanFile =
+                        Files.createTempFile(
+                                "flink-executionPlan-" + executionPlan.getJobID(), ".bin");
+                try (ObjectOutputStream objectOut =
+                        new ObjectOutputStream(Files.newOutputStream(executionPlanFile))) {
+                    objectOut.writeObject(executionPlan);
+                }
+                serializedPlanFuture = CompletableFuture.completedFuture(executionPlanFile);
+            } catch (IOException | RuntimeException e) {
+                serializedPlanFuture =
+                        FutureUtils.completedExceptionally(
+                                new FlinkException("Failed to serialize ExecutionPlan.", e));
+            }
+        }
+        final CompletableFuture<java.nio.file.Path> executionPlanFileFuture = serializedPlanFuture;
 
         CompletableFuture<Tuple2<JobSubmitRequestBody, Collection<FileUpload>>> requestFuture =
                 executionPlanFileFuture.thenApply(

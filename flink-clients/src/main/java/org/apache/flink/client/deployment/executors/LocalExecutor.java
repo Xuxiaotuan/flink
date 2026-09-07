@@ -96,19 +96,28 @@ public class LocalExecutor implements PipelineExecutor {
         final StreamGraph streamGraph =
                 PipelineExecutorUtils.getStreamGraph(pipeline, configuration);
 
-        streamGraph.serializeUserDefinedInstances();
-        return PerJobMiniClusterFactory.createWithFactory(effectiveConfig, miniClusterFactory)
-                .submitJob(streamGraph, userCodeClassloader)
-                .whenComplete(
-                        (ignored, throwable) -> {
-                            if (throwable == null) {
-                                PipelineExecutorUtils.notifyJobStatusListeners(
-                                        pipeline, streamGraph, jobStatusChangedListeners);
-                            } else {
-                                LOG.error(
-                                        "Failed to submit job graph to local mini cluster.",
-                                        throwable);
-                            }
-                        });
+        final CompletableFuture<JobClient> submission;
+        final String submissionId;
+        synchronized (streamGraph) {
+            streamGraph.serializeUserDefinedInstances();
+            submission =
+                    PerJobMiniClusterFactory.createWithFactory(effectiveConfig, miniClusterFactory)
+                            .submitJob(streamGraph, userCodeClassloader);
+            submissionId =
+                    streamGraph
+                            .getJobConfiguration()
+                            .getString(
+                                    org.apache.flink.core.execution.SubmissionIdentity.CONFIG_KEY,
+                                    null);
+        }
+        return submission.whenComplete(
+                (ignored, throwable) -> {
+                    if (throwable == null) {
+                        PipelineExecutorUtils.notifyJobStatusListeners(
+                                pipeline, streamGraph, jobStatusChangedListeners, submissionId);
+                    } else {
+                        LOG.error("Failed to submit job graph to local mini cluster.", throwable);
+                    }
+                });
     }
 }

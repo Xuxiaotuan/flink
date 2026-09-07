@@ -29,7 +29,7 @@ import java.util.Map;
 
 /** Default implementation for {@link JobExecutionStatusEvent}. */
 @Internal
-public class DefaultJobExecutionStatusEvent implements JobExecutionStatusEvent {
+public class DefaultJobExecutionStatusEvent implements JobExecutionStatusEvent, SubmissionIdentity {
     public static final String LINEAGE_TABLE_STATUS = "internal.lineage.table-status";
     public static final String LINEAGE_COLUMN_STATUS = "internal.lineage.column-status";
     public static final String LINEAGE_COLUMN_STATUSES = "internal.lineage.column-statuses";
@@ -41,6 +41,7 @@ public class DefaultJobExecutionStatusEvent implements JobExecutionStatusEvent {
     private final JobStatus oldStatus;
     private final JobStatus newStatus;
     @Nullable private final Throwable cause;
+    @Nullable private final String submissionId;
 
     public DefaultJobExecutionStatusEvent(
             JobID jobId,
@@ -58,12 +59,30 @@ public class DefaultJobExecutionStatusEvent implements JobExecutionStatusEvent {
             JobStatus newStatus,
             @Nullable Throwable cause,
             Map<String, String> lineageStatus) {
+        this(jobId, jobName, oldStatus, newStatus, cause, lineageStatus, null);
+    }
+
+    public DefaultJobExecutionStatusEvent(
+            JobID jobId,
+            String jobName,
+            JobStatus oldStatus,
+            JobStatus newStatus,
+            @Nullable Throwable cause,
+            Map<String, String> lineageStatus,
+            @Nullable String submissionId) {
         this.jobId = jobId;
         this.jobName = jobName;
         this.oldStatus = oldStatus;
         this.newStatus = newStatus;
         this.cause = cause;
         this.lineageStatus = Map.copyOf(lineageStatus);
+        this.submissionId = submissionId;
+    }
+
+    @Nullable
+    @Override
+    public String submissionId() {
+        return submissionId;
     }
 
     /** Optional observation metadata transferred with the job, unrelated to execution outcome. */

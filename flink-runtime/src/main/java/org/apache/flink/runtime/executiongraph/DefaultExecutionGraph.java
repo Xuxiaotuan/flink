@@ -1730,7 +1730,13 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
                                                             .getString(
                                                                     DefaultJobExecutionStatusEvent
                                                                             .LINEAGE_ISSUES,
-                                                                    "No lineage observation was transferred")))));
+                                                                    "No lineage observation was transferred")),
+                                            jobInformation
+                                                    .getJobConfiguration()
+                                                    .getString(
+                                                            org.apache.flink.core.execution
+                                                                    .SubmissionIdentity.CONFIG_KEY,
+                                                            null))));
         }
     }
 
