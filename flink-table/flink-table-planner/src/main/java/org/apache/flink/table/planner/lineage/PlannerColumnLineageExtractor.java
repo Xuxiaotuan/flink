@@ -24,11 +24,13 @@ import org.apache.flink.table.planner.plan.nodes.calcite.WatermarkAssigner;
 import org.apache.flink.table.planner.plan.schema.TableSourceTable;
 import org.apache.flink.table.planner.plan.utils.ExpandTableScanShuttle;
 
+import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.core.Calc;
+import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Intersect;
 import org.apache.calcite.rel.core.Join;
@@ -58,6 +60,7 @@ import org.apache.calcite.rex.RexOver;
 import org.apache.calcite.rex.RexPatternFieldRef;
 import org.apache.calcite.rex.RexProgram;
 import org.apache.calcite.rex.RexRangeRef;
+import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.rex.RexSubQuery;
 import org.apache.calcite.rex.RexTableInputRef;
 import org.apache.calcite.rex.RexVisitorImpl;
@@ -65,8 +68,10 @@ import org.apache.calcite.sql.SqlKind;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -74,7 +79,11 @@ import java.util.Set;
 @Internal
 public final class PlannerColumnLineageExtractor {
 
-    private PlannerColumnLineageExtractor() {}
+    private final Map<CorrelationId, NodeLineage> correlations;
+
+    private PlannerColumnLineageExtractor(Map<CorrelationId, NodeLineage> correlations) {
+        this.correlations = correlations;
+    }
 
     public static PlannerSinkColumnLineage extract(
             String sinkKey, List<String> outputFields, RelNode relNode) {
@@ -82,7 +91,9 @@ public final class PlannerColumnLineageExtractor {
         Objects.requireNonNull(relNode, "relNode");
 
         final RelNode expandedRelNode = relNode.accept(new ExpandTableScanShuttle());
-        final NodeLineage nodeLineage = extractNode(expandedRelNode);
+        final NodeLineage nodeLineage =
+                new PlannerColumnLineageExtractor(Collections.emptyMap())
+                        .extractNode(expandedRelNode);
         if (outputFields.size() != nodeLineage.fields.size()) {
             throw new TableLineageExtractionException(
                     "Sink '"
@@ -109,7 +120,7 @@ public final class PlannerColumnLineageExtractor {
                 sinkKey, outputFields, new ArrayList<>(nodeLineage.sources), relations);
     }
 
-    private static NodeLineage extractNode(RelNode relNode) {
+    private NodeLineage extractNode(RelNode relNode) {
         if (relNode instanceof RepeatUnion || relNode instanceof TableSpool) {
             throw unsupportedRecursiveCte(relNode);
         }
@@ -181,20 +192,21 @@ public final class PlannerColumnLineageExtractor {
         return NodeLineage.source(fieldNames, fields, dataset);
     }
 
-    private static NodeLineage extractProject(Project project) {
+    private NodeLineage extractProject(Project project) {
         final NodeLineage input = extractNode(project.getInput());
         final List<String> outputNames = project.getRowType().getFieldNames();
         final List<FieldLineage> fields = new ArrayList<>(project.getProjects().size());
         for (int i = 0; i < project.getProjects().size(); i++) {
             final RexNode expression = project.getProjects().get(i);
-            final FieldLineage field = lineageFromExpression(expression, input);
+            final FieldLineage field =
+                    lineageFromExpression(expression, input, project.getVariablesSet());
             addAliasIfNeeded(field, expression, input, outputNames.get(i));
             fields.add(field);
         }
         return input.withFields(outputNames, fields);
     }
 
-    private static NodeLineage extractCalc(Calc calc) {
+    private NodeLineage extractCalc(Calc calc) {
         final NodeLineage input = extractNode(calc.getInput());
         final RexProgram program = calc.getProgram();
         final List<FieldLineage> fields = new ArrayList<>(program.getProjectList().size());
@@ -226,29 +238,71 @@ public final class PlannerColumnLineageExtractor {
         }
     }
 
-    private static NodeLineage extractFilter(Filter filter) {
+    private NodeLineage extractFilter(Filter filter) {
         final NodeLineage input = extractNode(filter.getInput());
         return input.withRowDependency(
-                lineageFromExpression(filter.getCondition(), input),
+                lineageFromExpression(filter.getCondition(), input, filter.getVariablesSet()),
                 PlannerColumnLineageTransformation.FILTER);
     }
 
-    private static NodeLineage extractJoin(Join join) {
+    private NodeLineage extractJoin(Join join) {
         final NodeLineage left = extractNode(join.getLeft());
         final NodeLineage right = extractNode(join.getRight());
         final List<String> conditionFields = new ArrayList<>(left.fieldNames);
         conditionFields.addAll(right.fieldNames);
         final NodeLineage combined = left.append(right, conditionFields);
+        final Set<CorrelationId> variables = new LinkedHashSet<>(join.getVariablesSet());
+        join.getCondition()
+                .accept(
+                        new RexShuttle() {
+                            @Override
+                            public RexNode visitSubQuery(RexSubQuery subQuery) {
+                                rejectUndeclaredNestedJoinScope(subQuery.rel);
+                                // Like Calcite's JOIN_SUB_QUERY_TO_CORRELATE rule, free
+                                // correlations reference the concatenated left/right row.
+                                // An already bound ancestor remains in its original scope.
+                                for (CorrelationId variable :
+                                        RelOptUtil.getVariablesUsed(subQuery.rel)) {
+                                    if (!correlations.containsKey(variable)) {
+                                        variables.add(variable);
+                                    }
+                                }
+                                return super.visitSubQuery(subQuery);
+                            }
+                        });
         final NodeLineage result =
                 combined.withRowDependency(
-                        lineageFromExpression(join.getCondition(), combined),
+                        lineageFromExpression(join.getCondition(), combined, variables),
                         PlannerColumnLineageTransformation.JOIN);
         return result.withFields(
                 join.getRowType().getFieldNames(),
                 join.getJoinType().projectsRight() ? result.fields : copyFields(left.fields));
     }
 
-    private static NodeLineage extractMembershipSet(SetOp operation) {
+    private void rejectUndeclaredNestedJoinScope(RelNode node) {
+        node.accept(
+                new RexShuttle() {
+                    @Override
+                    public RexNode visitSubQuery(RexSubQuery subQuery) {
+                        if (node instanceof Join && node.getVariablesSet().isEmpty()) {
+                            final Set<CorrelationId> unresolved =
+                                    RelOptUtil.getVariablesUsed(subQuery.rel);
+                            unresolved.removeAll(correlations.keySet());
+                            if (!unresolved.isEmpty()) {
+                                // EXISTS can strip the Project declaring this inner JOIN's
+                                // correlation. Equal row types cannot identify its owner.
+                                throw new TableLineageExtractionException(
+                                        "Cannot resolve an undeclared correlation scope in a nested JOIN subquery.");
+                            }
+                        }
+                        rejectUndeclaredNestedJoinScope(subQuery.rel);
+                        return super.visitSubQuery(subQuery);
+                    }
+                });
+        node.getInputs().forEach(this::rejectUndeclaredNestedJoinScope);
+    }
+
+    private NodeLineage extractMembershipSet(SetOp operation) {
         final List<NodeLineage> inputs = new ArrayList<>();
         final Set<PlannerColumnLineageInput> dependencies = new LinkedHashSet<>();
         final Set<PlannerColumnLineageTransformation> transformations = new LinkedHashSet<>();
@@ -295,7 +349,7 @@ public final class PlannerColumnLineageExtractor {
                 sources);
     }
 
-    private static NodeLineage extractAggregate(Aggregate aggregate) {
+    private NodeLineage extractAggregate(Aggregate aggregate) {
         final NodeLineage input = extractNode(aggregate.getInput());
         final List<FieldLineage> fields = new ArrayList<>();
         final List<Integer> groupFields = aggregate.getGroupSet().asList();
@@ -334,7 +388,7 @@ public final class PlannerColumnLineageExtractor {
                 input.sources);
     }
 
-    private static NodeLineage extractWindow(Window window) {
+    private NodeLineage extractWindow(Window window) {
         final NodeLineage input = extractNode(window.getInput());
         final NodeLineage expressionInput = input.appendConstants(window.getConstants());
         final List<FieldLineage> fields = copyFields(input.fields);
@@ -358,7 +412,7 @@ public final class PlannerColumnLineageExtractor {
         return input.withFields(window.getRowType().getFieldNames(), fields);
     }
 
-    private static NodeLineage extractUnion(Union union) {
+    private NodeLineage extractUnion(Union union) {
         final List<NodeLineage> inputs = new ArrayList<>(union.getInputs().size());
         for (RelNode input : union.getInputs()) {
             inputs.add(extractNode(input));
@@ -398,7 +452,7 @@ public final class PlannerColumnLineageExtractor {
                 sources);
     }
 
-    private static NodeLineage extractSort(Sort sort) {
+    private NodeLineage extractSort(Sort sort) {
         final NodeLineage input = extractNode(sort.getInput());
         final FieldLineage ordering = new FieldLineage();
         for (RelFieldCollation collation : sort.getCollation().getFieldCollations()) {
@@ -421,12 +475,20 @@ public final class PlannerColumnLineageExtractor {
         return NodeLineage.of(relNode.getRowType().getFieldNames(), fields);
     }
 
-    private static FieldLineage lineageFromExpression(RexNode expression, NodeLineage input) {
+    private FieldLineage lineageFromExpression(RexNode expression, NodeLineage input) {
         return expression.accept(new LineageRexVisitor(input));
     }
 
-    private static FieldLineage aggregateLineage(
-            NodeLineage input, List<? extends RexNode> arguments) {
+    private FieldLineage lineageFromExpression(
+            RexNode expression, NodeLineage input, Set<CorrelationId> variables) {
+        final Map<CorrelationId, NodeLineage> scoped = new HashMap<>(correlations);
+        for (CorrelationId variable : variables) {
+            scoped.put(variable, input);
+        }
+        return new PlannerColumnLineageExtractor(scoped).lineageFromExpression(expression, input);
+    }
+
+    private FieldLineage aggregateLineage(NodeLineage input, List<? extends RexNode> arguments) {
         final FieldLineage field = FieldLineage.system();
         for (RexNode argument : arguments) {
             field.merge(lineageFromExpression(argument, input));
@@ -486,7 +548,7 @@ public final class PlannerColumnLineageExtractor {
                         + rexNode.getClass().getSimpleName());
     }
 
-    private static final class LineageRexVisitor extends RexVisitorImpl<FieldLineage> {
+    private final class LineageRexVisitor extends RexVisitorImpl<FieldLineage> {
 
         private final NodeLineage input;
 
@@ -590,6 +652,15 @@ public final class PlannerColumnLineageExtractor {
 
         @Override
         public FieldLineage visitFieldAccess(RexFieldAccess fieldAccess) {
+            if (fieldAccess.getReferenceExpr() instanceof RexCorrelVariable) {
+                final RexCorrelVariable variable =
+                        (RexCorrelVariable) fieldAccess.getReferenceExpr();
+                final NodeLineage outer = correlations.get(variable.id);
+                if (outer == null) {
+                    throw unsupported(fieldAccess);
+                }
+                return outer.field(fieldAccess.getField().getIndex()).copy();
+            }
             final FieldLineage reference = fieldAccess.getReferenceExpr().accept(this);
             if (reference.nestedFields == null) {
                 // Only explicit ROW constructors expose exact per-field dependencies here.
@@ -603,7 +674,27 @@ public final class PlannerColumnLineageExtractor {
 
         @Override
         public FieldLineage visitSubQuery(RexSubQuery subQuery) {
-            throw unsupported(subQuery);
+            if (subQuery.getKind() != SqlKind.IN && subQuery.getKind() != SqlKind.EXISTS) {
+                throw unsupported(subQuery);
+            }
+            final NodeLineage inner =
+                    extractNode(subQuery.rel.accept(new ExpandTableScanShuttle()));
+            final FieldLineage field = FieldLineage.system();
+            field.sources.addAll(inner.sources);
+            addIndirectInputs(field.inputs, inner.rowDependencies);
+            if (subQuery.getKind() == SqlKind.IN) {
+                if (subQuery.getOperands().size() != inner.fields.size()) {
+                    throw unsupported(subQuery);
+                }
+                for (RexNode operand : subQuery.getOperands()) {
+                    field.merge(operand.accept(this));
+                }
+                for (FieldLineage compared : inner.fields) {
+                    field.merge(compared);
+                }
+            }
+            field.transformations.add(PlannerColumnLineageTransformation.CONDITIONAL);
+            return field;
         }
 
         @Override
@@ -689,12 +780,16 @@ public final class PlannerColumnLineageExtractor {
         }
 
         private NodeLineage withFields(List<String> names, List<FieldLineage> newFields) {
+            final Set<PlannerLineageDataset> allSources = new LinkedHashSet<>(sources);
+            for (FieldLineage field : newFields) {
+                allSources.addAll(field.sources);
+            }
             return new NodeLineage(
                     names,
                     newFields,
                     new LinkedHashSet<>(rowDependencies),
                     new LinkedHashSet<>(rowTransformations),
-                    new LinkedHashSet<>(sources));
+                    allSources);
         }
 
         private NodeLineage withRowDependency(
@@ -705,12 +800,9 @@ public final class PlannerColumnLineageExtractor {
             final Set<PlannerColumnLineageTransformation> transformations =
                     new LinkedHashSet<>(rowTransformations);
             transformations.add(transformation);
-            return new NodeLineage(
-                    fieldNames,
-                    fields,
-                    dependencies,
-                    transformations,
-                    new LinkedHashSet<>(sources));
+            final Set<PlannerLineageDataset> allSources = new LinkedHashSet<>(sources);
+            allSources.addAll(dependency.sources);
+            return new NodeLineage(fieldNames, fields, dependencies, transformations, allSources);
         }
 
         private NodeLineage append(NodeLineage other, List<String> outputNames) {
@@ -742,6 +834,7 @@ public final class PlannerColumnLineageExtractor {
     private static final class FieldLineage {
 
         private final Set<PlannerColumnLineageInput> inputs = new LinkedHashSet<>();
+        private final Set<PlannerLineageDataset> sources = new LinkedHashSet<>();
         private final Set<PlannerColumnLineageTransformation> transformations =
                 new LinkedHashSet<>();
         private PlannerColumnLineageOrigin origin = PlannerColumnLineageOrigin.CONSTANT;
@@ -767,6 +860,7 @@ public final class PlannerColumnLineageExtractor {
         private FieldLineage copy() {
             final FieldLineage copy = new FieldLineage();
             copy.origin = origin;
+            copy.sources.addAll(sources);
             addInputs(copy.inputs, inputs);
             copy.transformations.addAll(transformations);
             copy.nestedFields = nestedFields == null ? null : copyFields(nestedFields);
@@ -774,6 +868,7 @@ public final class PlannerColumnLineageExtractor {
         }
 
         private void merge(FieldLineage other) {
+            sources.addAll(other.sources);
             addInputs(inputs, other.inputs);
             transformations.addAll(other.transformations);
             if (hasDirectInput()) {
@@ -785,6 +880,7 @@ public final class PlannerColumnLineageExtractor {
         }
 
         private void addIndirect(FieldLineage dependency) {
+            sources.addAll(dependency.sources);
             addIndirectInputs(inputs, dependency.inputs);
         }
 

@@ -82,7 +82,10 @@ class ColumnLineagePropagationTest {
     void testSetMembershipLineageSurvivesDirectAndCompiledTranslation() throws Exception {
         for (boolean batch : new boolean[] {false, true}) {
             for (String operator :
-                    new String[] {"INTERSECT", "INTERSECT ALL", "EXCEPT", "EXCEPT ALL"}) {
+                    new String[] {
+                        "INTERSECT", "INTERSECT ALL", "EXCEPT", "EXCEPT ALL",
+                        "IN", "NOT IN", "EXISTS", "NOT EXISTS"
+                    }) {
                 final TableEnvironmentImpl environment =
                         (TableEnvironmentImpl)
                                 TableEnvironmentImpl.create(
@@ -100,10 +103,23 @@ class ColumnLineagePropagationTest {
                                                 .build())
                                 .option("sink-insert-only", "false")
                                 .build());
-                final String sql =
-                        "INSERT INTO SetSink SELECT `value` FROM LeftSource "
-                                + operator
-                                + " SELECT `value` FROM RightSource";
+                final String sql;
+                if (operator.endsWith("EXISTS")) {
+                    sql =
+                            "INSERT INTO SetSink SELECT l.`value` FROM LeftSource l WHERE "
+                                    + operator
+                                    + " (SELECT 1 FROM RightSource r WHERE r.`value` = l.`value`)";
+                } else if (operator.equals("IN") || operator.equals("NOT IN")) {
+                    sql =
+                            "INSERT INTO SetSink SELECT l.`value` FROM LeftSource l WHERE l.`value` "
+                                    + operator
+                                    + " (SELECT r.`value` FROM RightSource r)";
+                } else {
+                    sql =
+                            "INSERT INTO SetSink SELECT `value` FROM LeftSource "
+                                    + operator
+                                    + " SELECT `value` FROM RightSource";
+                }
                 final ModifyOperation operation =
                         (ModifyOperation) environment.getParser().parse(sql).get(0);
                 final LineageGraphObservation direct =
@@ -246,7 +262,7 @@ class ColumnLineagePropagationTest {
         statements.addInsertSql(INSERT_SQL);
         statements.addInsertSql(
                 "INSERT INTO OtherSink SELECT l.`value` FROM LineageSource l "
-                        + "WHERE EXISTS (SELECT 1 FROM OtherSource r WHERE r.`value` = l.`value`)");
+                        + "WHERE l.`value` >= (SELECT MIN(r.`value`) FROM OtherSource r)");
         final String json = statements.compilePlan().asJsonString();
         final LineageGraphObservation observation =
                 LineageGraphUtils.observe(
@@ -303,7 +319,7 @@ class ColumnLineagePropagationTest {
             statements.addInsertSql("INSERT INTO SharedSink SELECT `value` FROM LineageSource");
             statements.addInsertSql(
                     "INSERT INTO SharedSink SELECT l.`value` FROM LineageSource l "
-                            + "WHERE EXISTS (SELECT 1 FROM OtherSource r WHERE r.`value` = l.`value`)");
+                            + "WHERE l.`value` >= (SELECT MIN(r.`value`) FROM OtherSource r)");
             final LineageGraphObservation observation =
                     LineageGraphUtils.observe(
                             CompiledPlanUtils.toTransformations(
@@ -327,7 +343,7 @@ class ColumnLineagePropagationTest {
                 environment
                         .compilePlanSql(
                                 "INSERT INTO LineageSink SELECT l.`value` FROM LineageSource l WHERE 1=0 "
-                                        + "AND EXISTS (SELECT 1 FROM OtherSource r WHERE r.`value` = l.`value`)")
+                                        + "AND l.`value` >= (SELECT MIN(r.`value`) FROM OtherSource r)")
                         .asJsonString();
         environment.dropTemporaryTable("LineageSource");
         environment.dropTemporaryTable("OtherSource");

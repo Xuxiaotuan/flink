@@ -878,6 +878,198 @@ public abstract class PlannerColumnLineageExtractorTestBase extends TableTestBas
                 .hasMessageContaining("LogicalTableSpool");
     }
 
+    @Test
+    void testMembershipSubqueriesPreserveValueAndPredicateOrigins() {
+        for (String operator : Arrays.asList("IN", "NOT IN")) {
+            final PlannerSinkColumnLineage lineage =
+                    extract(
+                            "membership",
+                            "SELECT f.a FROM FirstTable f WHERE f.b "
+                                    + operator
+                                    + " (SELECT s.b FROM SecondTable s WHERE s.d = f.d)",
+                            "a");
+            assertInputs(
+                    relation(lineage, "a"),
+                    "FirstTable.a:DIRECT",
+                    "FirstTable.b:INDIRECT",
+                    "FirstTable.d:INDIRECT",
+                    "SecondTable.b:INDIRECT",
+                    "SecondTable.d:INDIRECT");
+            assertThat(lineage.getExpectedSources()).hasSize(2);
+        }
+    }
+
+    @Test
+    void testExistsDoesNotReadUnusedSelectExpressions() {
+        for (String operator : Arrays.asList("EXISTS", "NOT EXISTS")) {
+            final PlannerSinkColumnLineage lineage =
+                    extract(
+                            "existence",
+                            "SELECT f.a FROM FirstTable f WHERE "
+                                    + operator
+                                    + " (SELECT s.c FROM SecondTable s WHERE s.b = f.b)",
+                            "a");
+            assertInputs(
+                    relation(lineage, "a"),
+                    "FirstTable.a:DIRECT",
+                    "FirstTable.b:INDIRECT",
+                    "SecondTable.b:INDIRECT");
+            assertThat(lineage.getExpectedSources()).hasSize(2);
+        }
+    }
+
+    @Test
+    void testUncorrelatedExistsRetainsTableWithoutInventingFieldDependencies() {
+        final PlannerSinkColumnLineage lineage =
+                extract(
+                        "existence",
+                        "SELECT a FROM FirstTable WHERE EXISTS (SELECT c FROM SecondTable)",
+                        "a");
+        assertInputs(relation(lineage, "a"), "FirstTable.a:DIRECT");
+        assertThat(lineage.getExpectedSources()).hasSize(2);
+    }
+
+    @Test
+    void testNestedSubqueriesResolveBothOuterScopes() {
+        final PlannerSinkColumnLineage lineage =
+                extract(
+                        "nested",
+                        "SELECT f.a FROM FirstTable f WHERE f.b IN "
+                                + "(SELECT s.b FROM SecondTable s WHERE EXISTS "
+                                + "(SELECT 1 FROM FirstTable q WHERE q.d = s.d AND q.a = f.a))",
+                        "a");
+        assertInputs(
+                relation(lineage, "a"),
+                "FirstTable.a:DIRECT",
+                "FirstTable.a:INDIRECT",
+                "FirstTable.b:INDIRECT",
+                "FirstTable.d:INDIRECT",
+                "SecondTable.b:INDIRECT",
+                "SecondTable.d:INDIRECT");
+    }
+
+    @Test
+    void testProjectedMembershipDoesNotContaminateOtherOutputFields() {
+        final PlannerSinkColumnLineage lineage =
+                extract(
+                        "projected",
+                        "SELECT f.a, f.b IN (SELECT s.b FROM SecondTable s WHERE s.d > 0) AS `member` "
+                                + "FROM FirstTable f",
+                        "a",
+                        "member");
+        assertInputs(relation(lineage, "a"), "FirstTable.a:DIRECT");
+        assertInputs(
+                relation(lineage, "member"),
+                "FirstTable.b:DIRECT",
+                "SecondTable.b:DIRECT",
+                "SecondTable.d:INDIRECT");
+        assertThat(lineage.getExpectedSources()).hasSize(2);
+    }
+
+    @Test
+    void testCorrelatedExistsInJoinCondition() {
+        final String query =
+                "SELECT f.a FROM FirstTable f JOIN SecondTable s ON f.b = s.b "
+                        + "AND EXISTS (SELECT 1 FROM SecondTable q WHERE q.d = f.d)";
+        assertThat(util.getTableEnv().explainSql(query)).isNotBlank();
+        final PlannerSinkColumnLineage lineage = extract("join-subquery", query, "a");
+        assertInputs(
+                relation(lineage, "a"),
+                "FirstTable.a:DIRECT",
+                "FirstTable.b:INDIRECT",
+                "FirstTable.d:INDIRECT",
+                "SecondTable.b:INDIRECT",
+                "SecondTable.d:INDIRECT");
+    }
+
+    @Test
+    void testCorrelatedJoinSubqueryWithOuterWhereFilter() {
+        final String query =
+                "SELECT f.a FROM FirstTable f JOIN SecondTable s ON f.b = s.b "
+                        + "AND EXISTS (SELECT 1 FROM SecondTable q WHERE q.d = f.d) "
+                        + "WHERE f.a > 0";
+        assertThat(util.getTableEnv().explainSql(query)).isNotBlank();
+        final PlannerSinkColumnLineage lineage = extract("filtered-join-subquery", query, "a");
+        assertInputs(
+                relation(lineage, "a"),
+                "FirstTable.a:DIRECT",
+                "FirstTable.a:INDIRECT",
+                "FirstTable.b:INDIRECT",
+                "FirstTable.d:INDIRECT",
+                "SecondTable.b:INDIRECT",
+                "SecondTable.d:INDIRECT");
+    }
+
+    @Test
+    void testCorrelatedExistsUsesRightJoinFieldOffset() {
+        final PlannerSinkColumnLineage lineage =
+                extract(
+                        "right-join-subquery",
+                        "SELECT f.a FROM FirstTable f JOIN SecondTable s ON f.b = s.b "
+                                + "AND EXISTS (SELECT 1 FROM FirstTable q WHERE q.a = s.d)",
+                        "a");
+        assertInputs(
+                relation(lineage, "a"),
+                "FirstTable.a:DIRECT",
+                "FirstTable.a:INDIRECT",
+                "FirstTable.b:INDIRECT",
+                "SecondTable.b:INDIRECT",
+                "SecondTable.d:INDIRECT");
+    }
+
+    @Test
+    void testJoinSubqueryPreservesAlreadyBoundAncestor() {
+        final PlannerSinkColumnLineage lineage =
+                extract(
+                        "ancestor",
+                        "SELECT f.a FROM FirstTable f WHERE f.b IN "
+                                + "(SELECT q.b FROM SecondTable q JOIN FirstTable r ON q.b = r.b "
+                                + "AND EXISTS (SELECT 1 FROM SecondTable t "
+                                + "WHERE t.a = f.a AND t.d = q.d))",
+                        "a");
+        assertInputs(
+                relation(lineage, "a"),
+                "FirstTable.a:DIRECT",
+                "FirstTable.a:INDIRECT",
+                "FirstTable.b:INDIRECT",
+                "SecondTable.a:INDIRECT",
+                "SecondTable.b:INDIRECT",
+                "SecondTable.d:INDIRECT");
+    }
+
+    @Test
+    void testUncorrelatedNestedJoinSubqueryDoesNotRequireCorrelationScope() {
+        final String query =
+                "SELECT f.a FROM FirstTable f JOIN SecondTable s ON f.b = s.b "
+                        + "AND EXISTS (SELECT 1 FROM SecondTable q JOIN FirstTable r ON q.b = r.b "
+                        + "AND EXISTS (SELECT 1 FROM SecondTable z WHERE z.a > 0))";
+        assertThat(util.getTableEnv().explainSql(query)).isNotBlank();
+        assertInputs(
+                relation(extract("uncorrelated-nested", query, "a"), "a"),
+                "FirstTable.a:DIRECT",
+                "FirstTable.b:INDIRECT",
+                "SecondTable.a:INDIRECT",
+                "SecondTable.b:INDIRECT");
+    }
+
+    @Test
+    void testRejectsNestedJoinSubqueriesWithUndeclaredSameSchemaScopes() {
+        for (String owner : Arrays.asList("q", "f")) {
+            final String query =
+                    "SELECT f.a FROM FirstTable f JOIN SecondTable s ON f.b = s.b "
+                            + "AND EXISTS (SELECT 1 FROM SecondTable q JOIN FirstTable r ON q.b = r.b "
+                            + "AND EXISTS (SELECT 1 FROM SecondTable t WHERE t.a = "
+                            + owner
+                            + ".d))";
+            assertThatThrownBy(() -> extract("ambiguous", query, "a"))
+                    .isInstanceOf(TableLineageExtractionException.class)
+                    .hasMessageContaining("undeclared correlation scope in a nested JOIN subquery");
+            assertThatThrownBy(() -> util.getTableEnv().explainSql(query))
+                    .isInstanceOf(org.apache.flink.table.api.TableException.class)
+                    .hasMessageContaining("unexpected correlate variable");
+        }
+    }
+
     private PlannerSinkColumnLineage extract(String sinkKey, String query, String... outputFields) {
         return PlannerColumnLineageExtractor.extract(
                 sinkKey, Arrays.asList(outputFields), toRelNode(query));
