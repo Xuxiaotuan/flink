@@ -20,6 +20,8 @@ package org.apache.flink.streaming.api.lineage;
 
 import org.apache.flink.annotation.Internal;
 
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
+
 import javax.annotation.Nullable;
 
 import java.util.List;
@@ -29,11 +31,11 @@ import java.util.Optional;
 /** Default implementation for {@link ColumnLineageRelation}. */
 @Internal
 public final class DefaultColumnLineageRelation implements ColumnLineageRelation {
-    private final LineageDataset outputDataset;
-    private final String outputField;
-    private final List<ColumnLineageInput> inputs;
-    private final ColumnLineageOrigin origin;
-    private final @Nullable String transformation;
+    @JsonProperty private final LineageDataset outputDataset;
+    @JsonProperty private final String outputField;
+    @JsonProperty private final List<ColumnLineageInput> inputs;
+    @JsonProperty private final ColumnLineageOrigin origin;
+    @JsonProperty private final @Nullable String transformation;
 
     public DefaultColumnLineageRelation(
             LineageDataset outputDataset,

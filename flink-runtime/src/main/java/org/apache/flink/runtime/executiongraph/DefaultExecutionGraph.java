@@ -1693,6 +1693,14 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
                                             cause,
                                             java.util.Map.of(
                                                     DefaultJobExecutionStatusEvent
+                                                            .LINEAGE_TABLE_STATUSES,
+                                                    jobInformation
+                                                            .getJobConfiguration()
+                                                            .getString(
+                                                                    DefaultJobExecutionStatusEvent
+                                                                            .LINEAGE_TABLE_STATUSES,
+                                                                    "{}"),
+                                                    DefaultJobExecutionStatusEvent
                                                             .LINEAGE_TABLE_STATUS,
                                                     jobInformation
                                                             .getJobConfiguration()

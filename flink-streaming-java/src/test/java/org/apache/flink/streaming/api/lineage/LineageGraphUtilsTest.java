@@ -45,23 +45,79 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** Testing for lineage graph util. */
 class LineageGraphUtilsTest {
     @Test
-    void unknownSinkPreventsCompleteStatusWithoutDiscardingKnownColumns() {
+    void tableCoverageTracksEveryWriterAndPreservesIndependentCompleteOutputs() throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         DataStreamSource<Long> source =
                 env.fromSource(
                         new LineageSource(1L, 5L), WatermarkStrategy.noWatermarks(), "source");
         DataStreamSink<Long> good = annotatedSink(source, "good", "result");
-        DataStreamSink<Long> unknown = source.sinkTo(new DiscardingSink<>());
-        unknown.getTransformation().setLineageFailure("Missing sink identity");
+        DataStreamSink<Long> shared = annotatedSink(source, "shared", "result");
+        ((TransformationWithLineage<?>) good.getTransformation())
+                .setTableLineage(new TransformationTableLineage(List.of()));
+        ((TransformationWithLineage<?>) shared.getTransformation())
+                .setTableLineage(new TransformationTableLineage(List.of()));
+        DataStreamSink<Long> unknownWriter = source.sinkTo(new LineageSink());
+        ((TransformationWithLineage<?>) unknownWriter.getTransformation())
+                .setLineageVertex(
+                        LineageUtils.lineageVertexOf(dataset("shared", SINK_DATASET_NAMESPACE)));
+        String snapshot =
+                env.getStreamGraph()
+                        .getJobConfiguration()
+                        .getString("internal.lineage.table-statuses", "{}");
+        org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode json =
+                org.apache.flink.util.jackson.JacksonMapperFactory.createObjectMapper()
+                        .readTree(snapshot);
+        assertThat(json.path(SINK_DATASET_NAMESPACE).path("good").asText()).isEqualTo("COMPLETE");
+        assertThat(json.path(SINK_DATASET_NAMESPACE).path("shared").asText())
+                .isEqualTo("UNAVAILABLE");
+    }
+
+    @Test
+    void unknownWriterInvalidatesKnownColumnCoverageButPreservesInventory() {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSource<Long> source =
+                env.fromSource(
+                        new LineageSource(1L, 5L), WatermarkStrategy.noWatermarks(), "source");
+        DataStreamSink<Long> good = annotatedSink(source, "good", "result");
+        ((TransformationWithLineage<?>) good.getTransformation())
+                .setTableLineage(
+                        new TransformationTableLineage(
+                                LineageGraphUtils.convertToLineageGraph(
+                                                List.of(good.getTransformation()))
+                                        .sources()));
+        java.util.concurrent.atomic.AtomicBoolean metadataUnavailable =
+                new java.util.concurrent.atomic.AtomicBoolean(true);
+        LineageSink writer =
+                new LineageSink() {
+                    @Override
+                    public LineageVertex getLineageVertex() {
+                        if (metadataUnavailable.get()) {
+                            throw new IllegalStateException(
+                                    "Sink metadata temporarily unavailable");
+                        }
+                        return LineageUtils.lineageVertexOf(
+                                dataset("good", SINK_DATASET_NAMESPACE));
+                    }
+                };
+        DataStreamSink<Long> unknown = source.sinkTo(writer);
         LineageGraphObservation observation =
                 LineageGraphUtils.observe(
                         List.of(good.getTransformation(), unknown.getTransformation()));
-        assertThat(observation.getColumnStatus()).isEqualTo("PARTIAL");
-        assertThat(observation.columnRelations())
-                .extracting(relation -> relation.outputDataset().name())
+        metadataUnavailable.set(false);
+        assertThat(writer.getLineageVertex().datasets())
+                .extracting(LineageDataset::name)
+                .containsExactly("good");
+        assertThat(observation.getColumnStatus()).isEqualTo("UNAVAILABLE");
+        assertThat(observation.getTableStatuses().get(SINK_DATASET_NAMESPACE))
+                .containsEntry("good", "UNAVAILABLE");
+        assertThat(observation.columnRelations()).isEmpty();
+        assertThat(observation.sources()).isNotEmpty();
+        assertThat(observation.sinks())
+                .flatExtracting(LineageVertex::datasets)
+                .extracting(LineageDataset::name)
                 .containsExactly("good");
         assertThat(observation.getColumnStatuses().get(SINK_DATASET_NAMESPACE))
-                .containsEntry("good", "COMPLETE");
+                .containsEntry("good", "UNAVAILABLE");
         assertThat(observation.getIssues()).isNotEmpty();
     }
 

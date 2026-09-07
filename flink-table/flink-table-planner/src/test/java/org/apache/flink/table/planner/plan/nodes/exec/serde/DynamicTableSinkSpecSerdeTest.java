@@ -62,6 +62,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -87,6 +88,80 @@ import static org.junit.jupiter.api.parallel.ExecutionMode.CONCURRENT;
 /** Tests for {@link DynamicTableSinkSpec} serialization and deserialization. */
 @Execution(CONCURRENT)
 class DynamicTableSinkSpecSerdeTest {
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "2", "-1", "1.5", "\"1\"", "null"})
+    void testUnknownOptionalLineageVersionDoesNotPreventRestore(String version) throws Exception {
+        final PlannerMocks mocks = PlannerMocks.create();
+        final SerdeContext context =
+                configuredSerdeContext(mocks.getCatalogManager(), mocks.getTableConfig());
+        final DynamicTableSinkSpec spec = testDynamicTableSinkSpecSerde().findFirst().get();
+        final String sinkKey =
+                spec.getContextResolvedTable().getIdentifier().asSerializableString();
+        mocks.getCatalogManager()
+                .createTemporaryTable(
+                        spec.getContextResolvedTable().getResolvedTable(),
+                        spec.getContextResolvedTable().getIdentifier(),
+                        false);
+        spec.setColumnLineage(
+                new PlannerSinkColumnLineage(
+                        sinkKey,
+                        Collections.emptyList(),
+                        Collections.emptyList(),
+                        Collections.emptyList()));
+        spec.setTableLineage(
+                new PlannerSinkTableLineage(
+                        sinkKey, Collections.emptyList(), Collections.emptyList()));
+        final ObjectMapper mapper = new ObjectMapper();
+        final ObjectNode json = (ObjectNode) mapper.readTree(toJson(context, spec));
+        for (String field : Arrays.asList("columnLineage", "tableLineage")) {
+            ((ObjectNode) json.get(field)).set("formatVersion", mapper.readTree(version));
+        }
+        final DynamicTableSinkSpec restored =
+                toObject(context, json.toString(), DynamicTableSinkSpec.class);
+        assertThat(restored.getContextResolvedTable()).isEqualTo(spec.getContextResolvedTable());
+        assertThat(restored.getColumnLineage()).isNull();
+        assertThat(restored.getTableLineage()).isNull();
+        assertThat(restored.getTableSink(mocks.getPlannerContext().getFlinkContext())).isNotNull();
+    }
+
+    @Test
+    void testVersionedAndLegacyOptionalLineageRoundTrip() throws Exception {
+        final PlannerMocks mocks = PlannerMocks.create();
+        final SerdeContext context =
+                configuredSerdeContext(mocks.getCatalogManager(), mocks.getTableConfig());
+        final DynamicTableSinkSpec spec = testDynamicTableSinkSpecSerde().findFirst().get();
+        final String sinkKey =
+                spec.getContextResolvedTable().getIdentifier().asSerializableString();
+        mocks.getCatalogManager()
+                .createTemporaryTable(
+                        spec.getContextResolvedTable().getResolvedTable(),
+                        spec.getContextResolvedTable().getIdentifier(),
+                        false);
+        spec.setColumnLineage(
+                new PlannerSinkColumnLineage(
+                        sinkKey,
+                        Collections.emptyList(),
+                        Collections.emptyList(),
+                        Collections.emptyList()));
+        spec.setTableLineage(
+                new PlannerSinkTableLineage(
+                        sinkKey, Collections.emptyList(), Collections.emptyList()));
+        final ObjectNode json = (ObjectNode) new ObjectMapper().readTree(toJson(context, spec));
+        assertThat(json.path("columnLineage").path("formatVersion").asInt()).isEqualTo(1);
+        assertThat(json.path("tableLineage").path("formatVersion").asInt()).isEqualTo(1);
+        for (boolean legacy : Arrays.asList(false, true)) {
+            if (legacy) {
+                ((ObjectNode) json.get("columnLineage")).remove("formatVersion");
+                ((ObjectNode) json.get("tableLineage")).remove("formatVersion");
+            }
+            final DynamicTableSinkSpec restored =
+                    toObject(context, json.toString(), DynamicTableSinkSpec.class);
+            assertThat(restored.getColumnLineage()).isEqualTo(spec.getColumnLineage());
+            assertThat(restored.getTableLineage().getSinkKey()).isEqualTo(sinkKey);
+            assertThat(restored.getTableLineage().getExpectedSources()).isEmpty();
+        }
+    }
 
     @Test
     void testOptionalLineageDoesNotChangeExecutionIdentity() {

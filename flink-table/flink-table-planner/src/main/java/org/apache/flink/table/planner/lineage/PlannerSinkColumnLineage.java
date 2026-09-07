@@ -170,6 +170,12 @@ public final class PlannerSinkColumnLineage {
         return sinkKey;
     }
 
+    /** Version of this optional observation extension, independent of the execution plan. */
+    @JsonProperty("formatVersion")
+    public int getFormatVersion() {
+        return 1;
+    }
+
     @JsonProperty(FIELD_NAME_EXPECTED_OUTPUT_FIELDS)
     public List<String> getExpectedOutputFields() {
         return expectedOutputFields;

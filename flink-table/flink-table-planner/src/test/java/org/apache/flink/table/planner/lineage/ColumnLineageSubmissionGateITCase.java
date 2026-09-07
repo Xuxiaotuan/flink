@@ -32,6 +32,7 @@ import org.apache.flink.table.api.TableDescriptor;
 import org.apache.flink.table.api.internal.TableEnvironmentImpl;
 import org.apache.flink.table.planner.factories.TestValuesTableFactory;
 import org.apache.flink.test.junit5.MiniClusterExtension;
+import org.apache.flink.testutils.logging.LoggerAuditingExtension;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.jackson.JacksonMapperFactory;
 
@@ -42,6 +43,7 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.node.Obje
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
+import org.slf4j.event.Level;
 
 import java.util.Collections;
 import java.util.List;
@@ -54,6 +56,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Verifies that lineage failures cannot veto otherwise valid Table jobs. */
 class ColumnLineageSubmissionGateITCase {
+
+    @RegisterExtension
+    private final LoggerAuditingExtension lineageLogs =
+            new LoggerAuditingExtension("org.apache.flink.table.planner", Level.INFO);
 
     private static final String INSERT_SQL =
             "INSERT INTO LineageSink SELECT `value` + 1 FROM LineageSource";
@@ -78,6 +84,50 @@ class ColumnLineageSubmissionGateITCase {
     @Test
     void invalidLineageDoesNotPreventPlanRestore() throws Exception {
         assertPlanExecutesWithMissingLineage(true);
+        assertExpectedObservationLogs();
+    }
+
+    @Test
+    void unknownLineageVersionDoesNotPreventExecution() throws Exception {
+        final TableEnvironmentImpl environment = createEnvironment();
+        final JsonNode plan =
+                OBJECT_MAPPER.readTree(environment.compilePlanSql(INSERT_SQL).asJsonString());
+        for (String field : List.of("columnLineage", "tableLineage")) {
+            final List<JsonNode> metadata = plan.findValues(field);
+            assertThat(metadata).hasSize(1);
+            ((ObjectNode) metadata.get(0)).put("formatVersion", 999);
+        }
+        environment
+                .loadPlan(PlanReference.fromJsonString(plan.toString()))
+                .execute()
+                .await(30, TimeUnit.SECONDS);
+        assertThat(TestValuesTableFactory.getResults("LineageSink")).containsExactly(Row.of(8L));
+        assertThat(STATUS_CHANGED_EVENTS).anyMatch(JobCreatedEvent.class::isInstance);
+        STATUS_CHANGED_EVENTS.stream()
+                .filter(JobCreatedEvent.class::isInstance)
+                .map(JobCreatedEvent.class::cast)
+                .forEach(
+                        event -> {
+                            final org.apache.flink.streaming.api.lineage.LineageGraphObservation
+                                    observation =
+                                            (org.apache.flink.streaming.api.lineage
+                                                            .LineageGraphObservation)
+                                                    event.lineageGraph();
+                            assertThat(observation.getTableStatus()).isNotEqualTo("COMPLETE");
+                            assertThat(observation.getColumnStatus()).isEqualTo("UNAVAILABLE");
+                            assertThat(observation.columnRelations()).isEmpty();
+                        });
+        assertExpectedObservationLogs();
+    }
+
+    @Test
+    void malformedExecutablePlanStillFails() {
+        assertThatThrownBy(
+                        () ->
+                                createEnvironment()
+                                        .loadPlan(PlanReference.fromJsonString("{\"nodes\":[")))
+                .isInstanceOf(org.apache.flink.table.api.TableException.class);
+        assertThat(STATUS_CHANGED_EVENTS).noneMatch(JobCreatedEvent.class::isInstance);
     }
 
     @Test
@@ -145,6 +195,18 @@ class ColumnLineageSubmissionGateITCase {
                         "INSERT INTO LineageSink SELECT `value` FROM LineageSource INTERSECT SELECT `value` FROM LineageSource")
                 .await(30, TimeUnit.SECONDS);
         assertThat(TestValuesTableFactory.getResults("LineageSink")).containsExactly(Row.of(7L));
+        assertExpectedObservationLogs();
+    }
+
+    private void assertExpectedObservationLogs() {
+        assertThat(lineageLogs.getEvents())
+                .isNotEmpty()
+                .allSatisfy(
+                        event -> {
+                            assertThat(event.getThrown()).isNull();
+                            assertThat(event.getMessage().getFormattedMessage())
+                                    .doesNotContainIgnoringCase("exception");
+                        });
     }
 
     private static TableEnvironmentImpl createEnvironment() {

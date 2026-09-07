@@ -4,7 +4,7 @@
       "sourceLineageVertex": {
         "datasets": [
           {
-            "name": "default_catalog.default_database.FirstTable",
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
             "namespace": "values://FromElementsFunction",
             "objectPath": {
               "databaseName": "default_database",
@@ -19,7 +19,7 @@
       "sinkVertex": {
         "datasets": [
           {
-            "name": "default_catalog.default_database.SinkTable",
+            "name": "`default_catalog`.`default_database`.`SinkTable`",
             "namespace": "values://RetractingSinkFunction",
             "objectPath": {
               "databaseName": "default_database",
@@ -36,7 +36,7 @@
       "sourceLineageVertex": {
         "datasets": [
           {
-            "name": "default_catalog.default_database.SecondTable",
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
             "namespace": "values://FromElementsFunction",
             "objectPath": {
               "databaseName": "default_database",
@@ -51,7 +51,7 @@
       "sinkVertex": {
         "datasets": [
           {
-            "name": "default_catalog.default_database.SinkTable",
+            "name": "`default_catalog`.`default_database`.`SinkTable`",
             "namespace": "values://RetractingSinkFunction",
             "objectPath": {
               "databaseName": "default_database",
@@ -69,7 +69,7 @@
     {
       "datasets": [
         {
-          "name": "default_catalog.default_database.FirstTable",
+          "name": "`default_catalog`.`default_database`.`FirstTable`",
           "namespace": "values://FromElementsFunction",
           "objectPath": {
             "databaseName": "default_database",
@@ -84,7 +84,7 @@
     {
       "datasets": [
         {
-          "name": "default_catalog.default_database.SecondTable",
+          "name": "`default_catalog`.`default_database`.`SecondTable`",
           "namespace": "values://FromElementsFunction",
           "objectPath": {
             "databaseName": "default_database",
@@ -101,7 +101,7 @@
     {
       "datasets": [
         {
-          "name": "default_catalog.default_database.SinkTable",
+          "name": "`default_catalog`.`default_database`.`SinkTable`",
           "namespace": "values://RetractingSinkFunction",
           "objectPath": {
             "databaseName": "default_database",
@@ -112,6 +112,203 @@
         }
       ],
       "modifyType": "UPDATE"
+    }
+  ],
+  "columnLineageRelations": [
+    {
+      "outputDataset": {
+        "name": "`default_catalog`.`default_database`.`SinkTable`",
+        "namespace": "values://RetractingSinkFunction",
+        "objectPath": {
+          "databaseName": "default_database",
+          "objectName": "SinkTable",
+          "fullName": "default_database.SinkTable"
+        },
+        "facets": {}
+      },
+      "outputField": "avg_a",
+      "inputs": [
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "a",
+          "dependencyType": "DIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "a",
+          "dependencyType": "DIRECT"
+        }
+      ],
+      "origin": "INPUT_FIELDS",
+      "transformation": "AGGREGATION,CAST,UNION"
+    },
+    {
+      "outputDataset": {
+        "name": "`default_catalog`.`default_database`.`SinkTable`",
+        "namespace": "values://RetractingSinkFunction",
+        "objectPath": {
+          "databaseName": "default_database",
+          "objectName": "SinkTable",
+          "fullName": "default_database.SinkTable"
+        },
+        "facets": {}
+      },
+      "outputField": "cnt",
+      "inputs": [],
+      "origin": "SYSTEM",
+      "transformation": "AGGREGATION,CAST,UNION"
+    },
+    {
+      "outputDataset": {
+        "name": "`default_catalog`.`default_database`.`SinkTable`",
+        "namespace": "values://RetractingSinkFunction",
+        "objectPath": {
+          "databaseName": "default_database",
+          "objectName": "SinkTable",
+          "fullName": "default_database.SinkTable"
+        },
+        "facets": {}
+      },
+      "outputField": "cnt_b",
+      "inputs": [],
+      "origin": "SYSTEM",
+      "transformation": "AGGREGATION,ALIAS,CAST,UNION"
+    },
+    {
+      "outputDataset": {
+        "name": "`default_catalog`.`default_database`.`SinkTable`",
+        "namespace": "values://RetractingSinkFunction",
+        "objectPath": {
+          "databaseName": "default_database",
+          "objectName": "SinkTable",
+          "fullName": "default_database.SinkTable"
+        },
+        "facets": {}
+      },
+      "outputField": "min_b",
+      "inputs": [
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "b",
+          "dependencyType": "DIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "b",
+          "dependencyType": "DIRECT"
+        }
+      ],
+      "origin": "INPUT_FIELDS",
+      "transformation": "AGGREGATION,CAST,UNION"
+    },
+    {
+      "outputDataset": {
+        "name": "`default_catalog`.`default_database`.`SinkTable`",
+        "namespace": "values://RetractingSinkFunction",
+        "objectPath": {
+          "databaseName": "default_database",
+          "objectName": "SinkTable",
+          "fullName": "default_database.SinkTable"
+        },
+        "facets": {}
+      },
+      "outputField": "max_c",
+      "inputs": [
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "c",
+          "dependencyType": "DIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "a",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "c",
+          "dependencyType": "DIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "a",
+          "dependencyType": "INDIRECT"
+        }
+      ],
+      "origin": "INPUT_FIELDS",
+      "transformation": "FILTER,AGGREGATION,UNION"
     }
   ]
 }

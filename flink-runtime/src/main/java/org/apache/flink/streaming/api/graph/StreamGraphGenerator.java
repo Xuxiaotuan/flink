@@ -292,6 +292,13 @@ public class StreamGraphGenerator {
                     .getJobConfiguration()
                     .setString(
                             org.apache.flink.core.execution.DefaultJobExecutionStatusEvent
+                                    .LINEAGE_TABLE_STATUSES,
+                            org.apache.flink.util.jackson.JacksonMapperFactory.createObjectMapper()
+                                    .writeValueAsString(observation.getTableStatuses()));
+            streamGraph
+                    .getJobConfiguration()
+                    .setString(
+                            org.apache.flink.core.execution.DefaultJobExecutionStatusEvent
                                     .LINEAGE_COLUMN_STATUSES,
                             org.apache.flink.util.jackson.JacksonMapperFactory.createObjectMapper()
                                     .writeValueAsString(observation.getColumnStatuses()));

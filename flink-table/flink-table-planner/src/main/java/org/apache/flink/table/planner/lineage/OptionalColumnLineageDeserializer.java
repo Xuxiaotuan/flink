@@ -38,13 +38,28 @@ public final class OptionalColumnLineageDeserializer
             throws IOException {
         // Malformed plan JSON remains an execution error; only the optional subtree is isolated.
         JsonNode tree = parser.getCodec().readTree(parser);
-        try {
-            return context.readTreeAsValue(tree, PlannerSinkColumnLineage.class);
-        } catch (IOException | RuntimeException error) {
+        JsonNode version = tree.get("formatVersion");
+        if (version != null
+                && (!version.isIntegralNumber()
+                        || !version.canConvertToInt()
+                        || version.intValue() != 1)) {
             LoggerFactory.getLogger(OptionalColumnLineageDeserializer.class)
                     .warn(
-                            "Invalid optional column lineage; restoring the execution plan without lineage.",
-                            error);
+                            "Unsupported optional column lineage version; restoring execution without it.");
+            return null;
+        }
+        try {
+            return context.readTreeAsValue(tree, PlannerSinkColumnLineage.class);
+        } catch (IOException error) {
+            LoggerFactory.getLogger(OptionalColumnLineageDeserializer.class)
+                    .warn(
+                            "Invalid optional column lineage; restoring the execution plan without lineage.");
+            LoggerFactory.getLogger(OptionalColumnLineageDeserializer.class)
+                    .debug("Invalid optional column lineage details.", error);
+            return null;
+        } catch (RuntimeException error) {
+            LoggerFactory.getLogger(OptionalColumnLineageDeserializer.class)
+                    .warn("Unexpected column lineage restore failure; execution continues.", error);
             return null;
         }
     }

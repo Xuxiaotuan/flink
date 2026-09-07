@@ -33,6 +33,52 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** Testing for lineage graph. */
 class DefaultLineageGraphTest {
     @Test
+    void observationSerializesGraphWithNonemptyColumnDependencies() throws Exception {
+        LineageDataset source = dataset("customers", "warehouse");
+        LineageDataset sink = dataset("orders", "warehouse");
+        LineageGraph graph =
+                DefaultLineageGraph.builder()
+                        .addLineageEdge(
+                                new DefaultLineageEdge(
+                                        new TestingSourceLineageVertex("source", source),
+                                        new TestingLineageVertex("sink", sink)))
+                        .addExpectedOutputField(sink, "customer_id")
+                        .addColumnLineageRelation(
+                                new DefaultColumnLineageRelation(
+                                        sink,
+                                        "customer_id",
+                                        List.of(
+                                                new DefaultColumnLineageInput(
+                                                        source,
+                                                        "id",
+                                                        ColumnLineageDependencyType.DIRECT)),
+                                        ColumnLineageOrigin.INPUT_FIELDS,
+                                        "CAST"))
+                        .build();
+        org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode json =
+                org.apache.flink.util.jackson.JacksonMapperFactory.createObjectMapper()
+                        .disable(
+                                org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind
+                                        .SerializationFeature.FAIL_ON_EMPTY_BEANS)
+                        .valueToTree(
+                                new LineageGraphObservation(
+                                        graph, "COMPLETE", "COMPLETE", List.of()));
+        assertThat(json.fieldNames())
+                .toIterable()
+                .containsExactlyInAnyOrder(
+                        "lineageEdges", "columnLineageRelations", "sources", "sinks");
+        assertThat(json.path("lineageEdges")).hasSize(1);
+        assertThat(json.path("columnLineageRelations")).hasSize(1);
+        assertThat(json.at("/columnLineageRelations/0/outputField").asText())
+                .isEqualTo("customer_id");
+        assertThat(json.at("/columnLineageRelations/0/inputs/0/inputField").asText())
+                .isEqualTo("id");
+        assertThat(json.at("/columnLineageRelations/0/inputs/0/dependencyType").asText())
+                .isEqualTo("DIRECT");
+        assertThat(json.at("/columnLineageRelations/0/transformation").asText()).isEqualTo("CAST");
+    }
+
+    @Test
     void testLineageGraph() {
         SourceLineageVertex source1 = new TestingSourceLineageVertex("source1");
         SourceLineageVertex source2 = new TestingSourceLineageVertex("source2");

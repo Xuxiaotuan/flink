@@ -20,6 +20,9 @@ package org.apache.flink.streaming.api.lineage;
 
 import org.apache.flink.annotation.Internal;
 
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnore;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,6 +36,7 @@ public final class LineageGraphObservation implements LineageGraph {
     private final String columnStatus;
     private final List<String> issues;
     private final Map<String, Map<String, String>> columnStatuses;
+    private final Map<String, Map<String, String>> tableStatuses;
 
     public LineageGraphObservation(
             LineageGraph graph, String tableStatus, String columnStatus, List<String> issues) {
@@ -45,6 +49,16 @@ public final class LineageGraphObservation implements LineageGraph {
             String columnStatus,
             List<String> issues,
             Map<String, Map<String, String>> columnStatuses) {
+        this(graph, tableStatus, columnStatus, issues, columnStatuses, Collections.emptyMap());
+    }
+
+    public LineageGraphObservation(
+            LineageGraph graph,
+            String tableStatus,
+            String columnStatus,
+            List<String> issues,
+            Map<String, Map<String, String>> columnStatuses,
+            Map<String, Map<String, String>> tableStatuses) {
         this.graph = graph;
         this.tableStatus = tableStatus;
         this.columnStatus = columnStatus;
@@ -52,41 +66,59 @@ public final class LineageGraphObservation implements LineageGraph {
         Map<String, Map<String, String>> copy = new LinkedHashMap<>();
         columnStatuses.forEach((namespace, statuses) -> copy.put(namespace, Map.copyOf(statuses)));
         this.columnStatuses = Collections.unmodifiableMap(copy);
+        Map<String, Map<String, String>> tableCopy = new LinkedHashMap<>();
+        tableStatuses.forEach(
+                (namespace, statuses) -> tableCopy.put(namespace, Map.copyOf(statuses)));
+        this.tableStatuses = Collections.unmodifiableMap(tableCopy);
     }
 
+    /** Verified table coverage per native output identity, covering every writer. */
+    @JsonIgnore
+    public Map<String, Map<String, String>> getTableStatuses() {
+        return tableStatuses;
+    }
+
+    @JsonIgnore
     public String getTableStatus() {
         return tableStatus;
     }
 
+    @JsonIgnore
     public String getColumnStatus() {
         return columnStatus;
     }
 
+    @JsonIgnore
     public List<String> getIssues() {
         return issues;
     }
 
     /** Column completeness per namespace and output dataset, covering every writer. */
+    @JsonIgnore
     public Map<String, Map<String, String>> getColumnStatuses() {
         return columnStatuses;
     }
 
     @Override
+    @JsonProperty("sources")
     public List<SourceLineageVertex> sources() {
         return graph.sources();
     }
 
     @Override
+    @JsonProperty("sinks")
     public List<LineageVertex> sinks() {
         return graph.sinks();
     }
 
     @Override
+    @JsonProperty("lineageEdges")
     public List<LineageEdge> relations() {
         return graph.relations();
     }
 
     @Override
+    @JsonProperty("columnLineageRelations")
     public List<ColumnLineageRelation> columnRelations() {
         return graph.columnRelations();
     }

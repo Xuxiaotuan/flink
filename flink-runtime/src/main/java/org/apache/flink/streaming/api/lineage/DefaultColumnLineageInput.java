@@ -20,14 +20,16 @@ package org.apache.flink.streaming.api.lineage;
 
 import org.apache.flink.annotation.Internal;
 
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.Objects;
 
 /** Default implementation for {@link ColumnLineageInput}. */
 @Internal
 public final class DefaultColumnLineageInput implements ColumnLineageInput {
-    private final LineageDataset inputDataset;
-    private final String inputField;
-    private final ColumnLineageDependencyType dependencyType;
+    @JsonProperty private final LineageDataset inputDataset;
+    @JsonProperty private final String inputField;
+    @JsonProperty private final ColumnLineageDependencyType dependencyType;
 
     public DefaultColumnLineageInput(
             LineageDataset inputDataset,

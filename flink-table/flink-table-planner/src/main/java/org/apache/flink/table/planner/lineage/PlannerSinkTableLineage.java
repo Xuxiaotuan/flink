@@ -21,6 +21,7 @@ package org.apache.flink.table.planner.lineage;
 import org.apache.flink.annotation.Internal;
 
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.List;
@@ -28,6 +29,7 @@ import java.util.Objects;
 
 /** Verified logical table dependencies, independent of column expression support. */
 @Internal
+@JsonIgnoreProperties(ignoreUnknown = true)
 public final class PlannerSinkTableLineage {
     private final String sinkKey;
     private final List<PlannerLineageDataset> expectedSources;
@@ -46,6 +48,12 @@ public final class PlannerSinkTableLineage {
     @JsonProperty("sinkKey")
     public String getSinkKey() {
         return sinkKey;
+    }
+
+    /** Version of this optional observation extension, independent of the execution plan. */
+    @JsonProperty("formatVersion")
+    public int getFormatVersion() {
+        return 1;
     }
 
     @JsonProperty("expectedSources")

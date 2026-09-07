@@ -37,11 +37,27 @@ public final class OptionalTableLineageDeserializer
     public PlannerSinkTableLineage deserialize(JsonParser parser, DeserializationContext context)
             throws IOException {
         JsonNode tree = parser.getCodec().readTree(parser);
+        JsonNode version = tree.get("formatVersion");
+        if (version != null
+                && (!version.isIntegralNumber()
+                        || !version.canConvertToInt()
+                        || version.intValue() != 1)) {
+            LoggerFactory.getLogger(OptionalTableLineageDeserializer.class)
+                    .warn(
+                            "Unsupported optional table lineage version; restoring execution without it.");
+            return null;
+        }
         try {
             return context.readTreeAsValue(tree, PlannerSinkTableLineage.class);
-        } catch (IOException | RuntimeException error) {
+        } catch (IOException error) {
             LoggerFactory.getLogger(OptionalTableLineageDeserializer.class)
-                    .warn("Invalid optional table lineage; restoring execution without it.", error);
+                    .warn("Invalid optional table lineage; restoring execution without it.");
+            LoggerFactory.getLogger(OptionalTableLineageDeserializer.class)
+                    .debug("Invalid optional table lineage details.", error);
+            return null;
+        } catch (RuntimeException error) {
+            LoggerFactory.getLogger(OptionalTableLineageDeserializer.class)
+                    .warn("Unexpected table lineage restore failure; execution continues.", error);
             return null;
         }
     }

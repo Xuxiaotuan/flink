@@ -288,11 +288,7 @@ public abstract class CommonExecSink extends ExecNodeBase<Object>
                 try {
                     lineageTransformation.setTableLineage(createTableLineage(inputTransform));
                 } catch (RuntimeException error) {
-                    org.slf4j.LoggerFactory.getLogger(CommonExecSink.class)
-                            .warn(
-                                    "Logical table lineage unavailable for sink {}; execution continues.",
-                                    sinkIdentity(),
-                                    error);
+                    reportLineageFailure("Logical table lineage", error);
                 }
                 if (requiresColumnLineage) {
                     lineageTransformation.setColumnLineage(
@@ -309,16 +305,25 @@ public abstract class CommonExecSink extends ExecNodeBase<Object>
         } catch (RuntimeException error) {
             transformation.setLineageFailure(
                     error.getClass().getSimpleName() + ": " + error.getMessage());
-            org.slf4j.LoggerFactory.getLogger(CommonExecSink.class)
-                    .warn(
-                            "Column lineage unavailable for sink {}; job execution continues.",
-                            tableSinkSpec
-                                    .getContextResolvedTable()
-                                    .getIdentifier()
-                                    .asSummaryString(),
-                            error);
+            reportLineageFailure("Column lineage", error);
         }
         return transformation;
+    }
+
+    private void reportLineageFailure(String kind, RuntimeException error) {
+        final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(CommonExecSink.class);
+        final String sink =
+                tableSinkSpec.getContextResolvedTable().getIdentifier().asSummaryString();
+        if (error instanceof TableLineageExtractionException) {
+            logger.warn(
+                    "{} unavailable for sink {}; execution continues. Reason: {}",
+                    kind,
+                    sink,
+                    error.getMessage());
+            logger.debug("Lineage observation details for sink {}.", sink, error);
+        } else {
+            logger.warn("{} unavailable for sink {}; execution continues.", kind, sink, error);
+        }
     }
 
     private boolean requiresColumnLineage(DynamicTableSink tableSink) {

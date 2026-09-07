@@ -528,6 +528,357 @@
             "sink-insert-only" : "false"
           }
         }
+      },
+      "columnLineage" : {
+        "sinkKey" : "`default_catalog`.`default_database`.`snk`",
+        "expectedOutputFields" : [ "l0", "l1", "l2", "l3", "r0", "r2", "r1" ],
+        "expectedSources" : [ {
+          "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+        }, {
+          "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+        } ],
+        "relations" : [ {
+          "outputField" : "l0",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a0",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b0",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a0",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "JOIN" ]
+        }, {
+          "outputField" : "l1",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a1",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b0",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a0",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "JOIN" ]
+        }, {
+          "outputField" : "l2",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a2",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b0",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a0",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "JOIN" ]
+        }, {
+          "outputField" : "l3",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a3",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b0",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a0",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "JOIN" ]
+        }, {
+          "outputField" : "r0",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b0",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b0",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a0",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "JOIN" ]
+        }, {
+          "outputField" : "r2",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b2",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b0",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a0",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "JOIN" ]
+        }, {
+          "outputField" : "r1",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b1",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b1",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b2",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+            },
+            "field" : "b0",
+            "dependencyType" : "INDIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+            },
+            "field" : "a0",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "JOIN" ]
+        } ],
+        "prunedSources" : [ ],
+        "formatVersion" : 1
+      },
+      "tableLineage" : {
+        "sinkKey" : "`default_catalog`.`default_database`.`snk`",
+        "expectedSources" : [ {
+          "qualifiedName" : [ "default_catalog", "default_database", "src1" ]
+        }, {
+          "qualifiedName" : [ "default_catalog", "default_database", "src2" ]
+        } ],
+        "prunedSources" : [ ],
+        "formatVersion" : 1
       }
     },
     "inputChangelogMode" : [ "INSERT" ],

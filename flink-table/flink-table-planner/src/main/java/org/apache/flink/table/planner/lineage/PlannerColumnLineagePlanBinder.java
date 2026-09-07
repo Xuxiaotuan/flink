@@ -66,45 +66,43 @@ public final class PlannerColumnLineagePlanBinder {
             if (roots.size() != operations.size()) {
                 throw failure("<unknown>", "<unknown>", "roots and operations cannot be aligned");
             }
-            List<PlannerSinkColumnLineage> columns = new ArrayList<>();
-            List<PlannerSinkTableLineage> tables = new ArrayList<>();
-            Set<String> unavailableColumns = new LinkedHashSet<>();
+            List<PlannerSinkColumnLineage> columns =
+                    new ArrayList<>(Collections.nCopies(roots.size(), null));
+            List<PlannerSinkTableLineage> tables =
+                    new ArrayList<>(Collections.nCopies(roots.size(), null));
             for (int i = 0; i < roots.size(); i++) {
                 RelNode root = roots.get(i);
                 if (!(root instanceof Sink) || isDataStreamOrClientResult(operations.get(i))) {
                     continue;
                 }
                 Sink sink = (Sink) root;
+                if (sink.contextResolvedTable().isAnonymous()) {
+                    continue;
+                }
                 String key = sink.contextResolvedTable().getIdentifier().asSerializableString();
                 try {
-                    columns.addAll(
+                    columns.set(
+                            i,
                             extract(
-                                    Collections.singletonList(root),
-                                    Collections.singletonList(operations.get(i))));
+                                            Collections.singletonList(root),
+                                            Collections.singletonList(operations.get(i)))
+                                    .get(0));
                 } catch (RuntimeException error) {
-                    unavailableColumns.add(key);
-                    LOG.warn(
-                            "Column lineage unavailable for sink {}; execution continues.",
-                            key,
-                            error);
+                    report("Column lineage unavailable for sink " + key, error);
                 }
                 try {
                     if (!sink.contextResolvedTable().isAnonymous()) {
-                        tables.add(
+                        tables.set(
+                                i,
                                 new PlannerSinkTableLineage(
                                         key,
                                         PlannerTableLineageExtractor.extract(sink.getInput()),
                                         Collections.emptyList()));
                     }
                 } catch (RuntimeException error) {
-                    LOG.warn(
-                            "Logical table lineage unavailable for sink {}; execution continues.",
-                            key,
-                            error);
+                    report("Logical table lineage unavailable for sink " + key, error);
                 }
             }
-            // Every writer must contribute before a dataset's column bundle is complete.
-            columns.removeIf(lineage -> unavailableColumns.contains(lineage.getSinkKey()));
             PlannerColumnLineagePlanBinder observer =
                     new PlannerColumnLineagePlanBinder(columns, roots);
             observer.logicalTables.clear();
@@ -120,10 +118,24 @@ public final class PlannerColumnLineagePlanBinder {
     }
 
     private void fail(RuntimeException error) {
-        failureReason = error.getClass().getSimpleName() + ": " + error.getMessage();
+        failureReason =
+                error instanceof TableLineageExtractionException
+                        ? error.getMessage()
+                        : error.getClass().getSimpleName() + ": " + error.getMessage();
         physicalLineages.clear();
+        physicalTables.clear();
         optimizedLineages = null;
-        LOG.warn("Column lineage observation failed; job execution will continue.", error);
+        optimizedTables = null;
+        report("Lineage observation failed", error);
+    }
+
+    private static void report(String context, RuntimeException error) {
+        if (error instanceof TableLineageExtractionException) {
+            LOG.warn("{}; execution continues. Reason: {}", context, error.getMessage());
+            LOG.debug(context, error);
+        } else {
+            LOG.warn("{}; execution continues.", context, error);
+        }
     }
 
     private void observe(Runnable action) {
@@ -146,6 +158,7 @@ public final class PlannerColumnLineagePlanBinder {
     }
 
     private final List<PlannerSinkColumnLineage> logicalLineages;
+    private final List<RelNode> logicalRoots;
     private final Map<RelNode, PlannerSinkColumnLineage> physicalLineages = new IdentityHashMap<>();
     private List<PlannerSinkColumnLineage> optimizedLineages;
     private final List<PlannerSinkTableLineage> logicalTables = new ArrayList<>();
@@ -156,14 +169,20 @@ public final class PlannerColumnLineagePlanBinder {
     public PlannerColumnLineagePlanBinder(
             List<PlannerSinkColumnLineage> logicalLineages, List<RelNode> logicalRoots) {
         this.logicalLineages = logicalLineages;
+        this.logicalRoots = new ArrayList<>(logicalRoots);
         for (PlannerSinkColumnLineage lineage : logicalLineages) {
             logicalTables.add(
-                    new PlannerSinkTableLineage(
-                            lineage.getSinkKey(),
-                            lineage.getExpectedSources(),
-                            Collections.emptyList()));
+                    lineage == null
+                            ? null
+                            : new PlannerSinkTableLineage(
+                                    lineage.getSinkKey(),
+                                    lineage.getExpectedSources(),
+                                    Collections.emptyList()));
         }
         for (TableSourceTable source : collectSourceTables(logicalRoots)) {
+            if (source.contextResolvedTable().isAnonymous()) {
+                continue;
+            }
             logicalSources
                     .computeIfAbsent(
                             source.contextResolvedTable().getIdentifier().asSerializableString(),
@@ -178,39 +197,37 @@ public final class PlannerColumnLineagePlanBinder {
     }
 
     private void bindPhysicalRootsChecked(List<RelNode> roots) {
-        Map<String, Deque<PlannerSinkTableLineage>> tablesBySink = new LinkedHashMap<>();
-        for (PlannerSinkTableLineage table : logicalTables) {
-            tablesBySink
-                    .computeIfAbsent(table.getSinkKey(), ignored -> new ArrayDeque<>())
-                    .addLast(table);
+        if (roots.size() != logicalRoots.size() || roots.size() != logicalLineages.size()) {
+            throw failure(
+                    "<unknown>",
+                    "<unknown>",
+                    "logical and physical writer slots cannot be aligned");
         }
-        final Map<String, Deque<PlannerSinkColumnLineage>> bySink = new LinkedHashMap<>();
-        for (PlannerSinkColumnLineage lineage : logicalLineages) {
-            bySink.computeIfAbsent(lineage.getSinkKey(), ignored -> new ArrayDeque<>())
-                    .addLast(lineage);
-        }
-        for (RelNode root : roots) {
-            if (!(root instanceof Sink) || ((Sink) root).contextResolvedTable().isAnonymous()) {
+        // The optimizer maps sink blocks in root order before SubplanReuser invokes this
+        // callback. Keep unavailable slots: a dataset key cannot distinguish its writers.
+        for (int i = 0; i < roots.size(); i++) {
+            RelNode root = roots.get(i);
+            RelNode logicalRoot = logicalRoots.get(i);
+            if (!(logicalRoot instanceof Sink)) {
+                if (root instanceof Sink) {
+                    throw failure("<unknown>", "<unknown>", "optimized writer changed root kind");
+                }
                 continue;
             }
-            final String key =
-                    ((Sink) root).contextResolvedTable().getIdentifier().asSerializableString();
-            final Deque<PlannerSinkColumnLineage> candidates = bySink.get(key);
-            Deque<PlannerSinkTableLineage> tableCandidates = tablesBySink.get(key);
-            if (tableCandidates != null && !tableCandidates.isEmpty()) {
-                physicalTables.put(root, tableCandidates.removeFirst());
+            if (!(root instanceof Sink)
+                    || !((Sink) logicalRoot)
+                            .contextResolvedTable()
+                            .equals(((Sink) root).contextResolvedTable())) {
+                throw failure(
+                        "<unknown>", "<unknown>", "optimized writer changed its sink context");
             }
-            if (candidates == null || candidates.isEmpty()) {
-                continue;
+            if (logicalTables.get(i) != null) {
+                physicalTables.put(root, logicalTables.get(i));
             }
-            physicalLineages.put(root, candidates.removeFirst());
+            if (logicalLineages.get(i) != null) {
+                physicalLineages.put(root, logicalLineages.get(i));
+            }
         }
-        bySink.forEach(
-                (key, candidates) -> {
-                    if (!candidates.isEmpty()) {
-                        throw failure(key, "<unknown>", "logical lineage has no optimized sink");
-                    }
-                });
     }
 
     /** Transfers metadata across root-preserving copies without changing their digests. */
@@ -231,16 +248,32 @@ public final class PlannerColumnLineagePlanBinder {
         for (int i = 0; i < after.size(); i++) {
             if (tables.get(i) != null) {
                 physicalTables.put(after.get(i), tables.get(i));
+            } else {
+                physicalTables.remove(after.get(i));
             }
             if (lineages.get(i) != null) {
                 physicalLineages.put(after.get(i), lineages.get(i));
+            } else {
+                physicalLineages.remove(after.get(i));
             }
         }
     }
 
     /** Called with the exact group selected by the existing SinkReuser. */
     public void reuseSinks(List<Sink> sinks) {
-        observe(() -> reuseSinksChecked(sinks));
+        if (failureReason != null) {
+            return;
+        }
+        try {
+            reuseSinksChecked(sinks);
+        } catch (RuntimeException error) {
+            sinks.forEach(
+                    sink -> {
+                        physicalTables.remove(sink);
+                        physicalLineages.remove(sink);
+                    });
+            report("Lineage unavailable for reused sink group", error);
+        }
     }
 
     private void reuseSinksChecked(List<Sink> sinks) {
@@ -298,7 +331,7 @@ public final class PlannerColumnLineagePlanBinder {
                                         snapshotPrunedSources(root, table.getExpectedSources())));
             } catch (RuntimeException error) {
                 optimizedTables.add(null);
-                LOG.warn("Unable to preserve logical table snapshots; execution continues.", error);
+                report("Unable to preserve logical table snapshots", error);
             }
             final PlannerSinkColumnLineage lineage = physicalLineages.get(root);
             if (lineage == null) {
@@ -317,9 +350,8 @@ public final class PlannerColumnLineagePlanBinder {
                                 pruned));
             } catch (RuntimeException error) {
                 optimizedLineages.add(null);
-                LOG.warn(
-                        "Unable to preserve column snapshots for sink {}; execution continues.",
-                        lineage.getSinkKey(),
+                report(
+                        "Unable to preserve column snapshots for sink " + lineage.getSinkKey(),
                         error);
             }
         }

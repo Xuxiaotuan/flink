@@ -72,6 +72,91 @@ class ColumnLineagePropagationTest {
             "INSERT INTO LineageSink SELECT `value` + 1 FROM LineageSource";
 
     @Test
+    void testAnonymousSinkDoesNotEraseNamedWriterLineage() throws Exception {
+        final TableEnvironmentImpl environment = createEnvironment();
+        final StatementSet statements = environment.createStatementSet();
+        statements.addInsert(
+                TableDescriptor.forConnector("blackhole").build(),
+                environment.from("LineageSource"));
+        statements.addInsertSql(INSERT_SQL);
+        final JsonNode json = new ObjectMapper().readTree(statements.compilePlan().asJsonString());
+        assertThat(json.findValues("columnLineage")).hasSize(1);
+        assertThat(json.findValues("columnLineage").get(0).get("sinkKey").asText())
+                .isEqualTo(identifier("LineageSink").asSerializableString());
+    }
+
+    @Test
+    void testAnonymousSourceDoesNotEraseUnrelatedWriterLineage() throws Exception {
+        final TableEnvironmentImpl environment = createEnvironment();
+        createValuesTable(environment, "OtherSink", "value");
+        final StatementSet statements = environment.createStatementSet();
+        statements.addInsert(
+                "OtherSink",
+                environment.from(
+                        TableDescriptor.forConnector("values")
+                                .schema(
+                                        Schema.newBuilder()
+                                                .column("value", DataTypes.BIGINT())
+                                                .build())
+                                .option("bounded", "true")
+                                .build()));
+        statements.addInsertSql(INSERT_SQL);
+        final JsonNode json = new ObjectMapper().readTree(statements.compilePlan().asJsonString());
+        assertThat(json.findValues("columnLineage")).hasSize(1);
+        assertThat(json.findValues("columnLineage").get(0).get("sinkKey").asText())
+                .isEqualTo(identifier("LineageSink").asSerializableString());
+    }
+
+    @Test
+    void testSameDatasetWriterSlotsKeepSuccessfulContributionInEitherOrder() throws Exception {
+        for (boolean unavailableFirst : new boolean[] {true, false}) {
+            final TableEnvironmentImpl environment = createEnvironment();
+            environment
+                    .getConfig()
+                    .set(OptimizerConfigOptions.TABLE_OPTIMIZER_REUSE_SINK_ENABLED, false);
+            final StatementSet statements = environment.createStatementSet();
+            if (!unavailableFirst) {
+                statements.addInsertSql(INSERT_SQL);
+            }
+            statements.addInsert(
+                    "LineageSink",
+                    environment.from(
+                            TableDescriptor.forConnector("values")
+                                    .schema(
+                                            Schema.newBuilder()
+                                                    .column("value", DataTypes.BIGINT())
+                                                    .build())
+                                    .option("bounded", "true")
+                                    .build()));
+            if (unavailableFirst) {
+                statements.addInsertSql(INSERT_SQL);
+            }
+            final List<Transformation<?>> transformations =
+                    CompiledPlanUtils.toTransformations(environment, statements.compilePlan());
+            assertThat(transformations).hasSize(2);
+            assertThat(
+                            ((TransformationWithLineage<?>)
+                                            transformations.get(unavailableFirst ? 0 : 1))
+                                    .getColumnLineage())
+                    .isNull();
+            assertThat(
+                            ((TransformationWithLineage<?>)
+                                            transformations.get(unavailableFirst ? 1 : 0))
+                                    .getColumnLineage())
+                    .isNotNull();
+            assertThat(transformations)
+                    .filteredOn(TransformationWithLineage.class::isInstance)
+                    .extracting(
+                            transformation ->
+                                    ((TransformationWithLineage<?>) transformation)
+                                            .getColumnLineage())
+                    .filteredOn(lineage -> lineage != null)
+                    .hasSize(1);
+            assertThat(LineageGraphUtils.observe(transformations).columnRelations()).isEmpty();
+        }
+    }
+
+    @Test
     void testUnsupportedColumnsPreserveIndependentTablesAndOtherSinkAcrossRestore()
             throws Exception {
         final TableEnvironmentImpl environment = createEnvironment();

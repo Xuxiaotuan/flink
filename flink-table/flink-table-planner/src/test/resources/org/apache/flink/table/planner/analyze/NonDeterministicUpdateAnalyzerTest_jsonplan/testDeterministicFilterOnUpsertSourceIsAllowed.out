@@ -78,6 +78,75 @@
     "dynamicTableSink" : {
       "table" : {
         "identifier" : "`default_catalog`.`default_database`.`sink_with_pk`"
+      },
+      "columnLineage" : {
+        "sinkKey" : "`default_catalog`.`default_database`.`sink_with_pk`",
+        "expectedOutputFields" : [ "a", "b", "c" ],
+        "expectedSources" : [ {
+          "qualifiedName" : [ "default_catalog", "default_database", "upsert_src3" ]
+        } ],
+        "relations" : [ {
+          "outputField" : "a",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "upsert_src3" ]
+            },
+            "field" : "a",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "upsert_src3" ]
+            },
+            "field" : "b",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "FILTER" ]
+        }, {
+          "outputField" : "b",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "upsert_src3" ]
+            },
+            "field" : "b",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "upsert_src3" ]
+            },
+            "field" : "b",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "FILTER" ]
+        }, {
+          "outputField" : "c",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "upsert_src3" ]
+            },
+            "field" : "c",
+            "dependencyType" : "DIRECT"
+          }, {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "upsert_src3" ]
+            },
+            "field" : "b",
+            "dependencyType" : "INDIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "FILTER" ]
+        } ],
+        "prunedSources" : [ ],
+        "formatVersion" : 1
+      },
+      "tableLineage" : {
+        "sinkKey" : "`default_catalog`.`default_database`.`sink_with_pk`",
+        "expectedSources" : [ {
+          "qualifiedName" : [ "default_catalog", "default_database", "upsert_src3" ]
+        } ],
+        "prunedSources" : [ ],
+        "formatVersion" : 1
       }
     },
     "inputChangelogMode" : [ "INSERT", "UPDATE_AFTER", "DELETE" ],

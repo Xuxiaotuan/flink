@@ -64,6 +64,7 @@ public class LineageGraphUtils {
         DefaultLineageGraph.LineageGraphBuilder builder = DefaultLineageGraph.builder();
         List<String> issues = new ArrayList<>();
         Map<String, Map<String, String>> statuses = new LinkedHashMap<>();
+        Map<String, Map<String, String>> tableStatuses = new LinkedHashMap<>();
         List<ColumnLineageContribution> contributions = new ArrayList<>();
         boolean completeTables = true;
         boolean unknownSink = false;
@@ -117,6 +118,17 @@ public class LineageGraphUtils {
                                     + ": verified logical table lineage is unavailable");
                 }
                 for (LineageDataset dataset : sink.datasets()) {
+                    tableStatuses
+                            .computeIfAbsent(dataset.namespace(), ignored -> new LinkedHashMap<>())
+                            .merge(
+                                    dataset.name(),
+                                    carrier != null && carrier.getTableLineage() != null
+                                            ? "COMPLETE"
+                                            : "UNAVAILABLE",
+                                    (previous, next) ->
+                                            "COMPLETE".equals(previous) && "COMPLETE".equals(next)
+                                                    ? "COMPLETE"
+                                                    : "UNAVAILABLE");
                     List<ColumnLineageRelation> relations = new ArrayList<>();
                     for (ColumnLineageRelation relation : part.columnRelations()) {
                         if (sameDataset(dataset, relation.outputDataset())) {
@@ -158,6 +170,13 @@ public class LineageGraphUtils {
                     }
                 }
             }
+        }
+        if (unknownSink) {
+            // Without an output identity, this writer cannot be excluded from any known dataset.
+            tableStatuses
+                    .values()
+                    .forEach(byName -> byName.replaceAll((name, status) -> "UNAVAILABLE"));
+            statuses.values().forEach(byName -> byName.replaceAll((name, status) -> "UNAVAILABLE"));
         }
         contributions.removeIf(
                 contribution ->
@@ -207,7 +226,8 @@ public class LineageGraphUtils {
                                 : "PARTIAL",
                 allColumns ? "COMPLETE" : validContributions.isEmpty() ? "UNAVAILABLE" : "PARTIAL",
                 issues,
-                statuses);
+                statuses,
+                tableStatuses);
     }
 
     private static void validateTableIdentities(LineageGraph graph) {

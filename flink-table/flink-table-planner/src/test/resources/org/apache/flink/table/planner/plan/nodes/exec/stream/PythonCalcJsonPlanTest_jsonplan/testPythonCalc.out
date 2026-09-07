@@ -98,6 +98,46 @@
             "table-sink-class" : "DEFAULT"
           }
         }
+      },
+      "columnLineage" : {
+        "sinkKey" : "`default_catalog`.`default_database`.`MySink`",
+        "expectedOutputFields" : [ "a", "b" ],
+        "expectedSources" : [ {
+          "qualifiedName" : [ "default_catalog", "default_database", "MyTable" ]
+        } ],
+        "relations" : [ {
+          "outputField" : "a",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "MyTable" ]
+            },
+            "field" : "a",
+            "dependencyType" : "DIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ ]
+        }, {
+          "outputField" : "b",
+          "inputs" : [ {
+            "dataset" : {
+              "qualifiedName" : [ "default_catalog", "default_database", "MyTable" ]
+            },
+            "field" : "b",
+            "dependencyType" : "DIRECT"
+          } ],
+          "origin" : "INPUT_FIELDS",
+          "transformations" : [ "UDF" ]
+        } ],
+        "prunedSources" : [ ],
+        "formatVersion" : 1
+      },
+      "tableLineage" : {
+        "sinkKey" : "`default_catalog`.`default_database`.`MySink`",
+        "expectedSources" : [ {
+          "qualifiedName" : [ "default_catalog", "default_database", "MyTable" ]
+        } ],
+        "prunedSources" : [ ],
+        "formatVersion" : 1
       }
     },
     "inputChangelogMode" : [ "INSERT" ],
