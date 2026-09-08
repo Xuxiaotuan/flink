@@ -179,9 +179,7 @@ public abstract class CommonExecSink extends ExecNodeBase<Object>
                                 isBounded, tableSinkSpec.getTargetColumns()));
         final RowType physicalRowType = getPhysicalRowType(schema);
         final boolean lineageEnabled =
-                config.get(
-                        org.apache.flink.table.planner.lineage.PlannerColumnLineagePlanBinder
-                                .ENABLED);
+                config.get(org.apache.flink.table.planner.lineage.PlannerLineageOptions.ENABLED);
         final boolean requiresColumnLineage = lineageEnabled && requiresColumnLineage(tableSink);
         final int[] primaryKeys = getPrimaryKeyIndices(physicalRowType, schema);
         final int sinkParallelism = deriveSinkParallelism(inputTransform, runtimeProvider);

@@ -51,13 +51,6 @@ import java.util.Set;
 /** Extracts logical column lineage and binds it to processed sink execution nodes. */
 @Internal
 public final class PlannerColumnLineagePlanBinder {
-    public static final org.apache.flink.configuration.ConfigOption<Boolean> ENABLED =
-            org.apache.flink.configuration.ConfigOptions.key("table.lineage.enabled")
-                    .booleanType()
-                    .defaultValue(true)
-                    .withDescription(
-                            "Observe native logical SQL lineage without vetoing execution.");
-
     private static final org.slf4j.Logger LOG =
             org.slf4j.LoggerFactory.getLogger(PlannerColumnLineagePlanBinder.class);
     private String failureReason;
@@ -67,7 +60,7 @@ public final class PlannerColumnLineagePlanBinder {
             List<RelNode> roots,
             List<?> operations,
             org.apache.flink.configuration.ReadableConfig config) {
-        final boolean enabled = config.get(ENABLED);
+        final boolean enabled = config.get(PlannerLineageOptions.ENABLED);
         LOG.info("Native SQL lineage observation enabled: {}", enabled);
         if (enabled) {
             return observe(roots, operations);
