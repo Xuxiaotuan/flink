@@ -155,6 +155,90 @@
           },
           "inputField": "a",
           "dependencyType": "DIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "a",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "b",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "c",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "a",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "b",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "c",
+          "dependencyType": "INDIRECT"
         }
       ],
       "origin": "INPUT_FIELDS",
@@ -172,7 +256,92 @@
         "facets": {}
       },
       "outputField": "cnt",
-      "inputs": [],
+      "inputs": [
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "a",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "b",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "c",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "a",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "b",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "c",
+          "dependencyType": "INDIRECT"
+        }
+      ],
       "origin": "SYSTEM",
       "transformation": "AGGREGATION,CAST,UNION"
     },
@@ -188,7 +357,92 @@
         "facets": {}
       },
       "outputField": "cnt_b",
-      "inputs": [],
+      "inputs": [
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "a",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "b",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "c",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "a",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "b",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "c",
+          "dependencyType": "INDIRECT"
+        }
+      ],
       "origin": "SYSTEM",
       "transformation": "AGGREGATION,ALIAS,CAST,UNION"
     },
@@ -232,6 +486,90 @@
           },
           "inputField": "b",
           "dependencyType": "DIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "a",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "b",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "c",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "a",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "b",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "c",
+          "dependencyType": "INDIRECT"
         }
       ],
       "origin": "INPUT_FIELDS",
@@ -304,6 +642,62 @@
             "facets": {}
           },
           "inputField": "a",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "b",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`FirstTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "FirstTable",
+              "fullName": "default_database.FirstTable"
+            },
+            "facets": {}
+          },
+          "inputField": "c",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "b",
+          "dependencyType": "INDIRECT"
+        },
+        {
+          "inputDataset": {
+            "name": "`default_catalog`.`default_database`.`SecondTable`",
+            "namespace": "values://FromElementsFunction",
+            "objectPath": {
+              "databaseName": "default_database",
+              "objectName": "SecondTable",
+              "fullName": "default_database.SecondTable"
+            },
+            "facets": {}
+          },
+          "inputField": "c",
           "dependencyType": "INDIRECT"
         }
       ],

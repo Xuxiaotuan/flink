@@ -210,6 +210,8 @@ class CachedShuffleDescriptorsTest {
                                 jobGraph,
                                 ComponentMainThreadExecutorServiceAdapter.forMainThread(),
                                 EXECUTOR_RESOURCE.getExecutor())
+                        // This test's main-thread adapter cannot dispatch background I/O callbacks.
+                        .setIoExecutor(Runnable::run)
                         .build();
         scheduler.startScheduling();
         return scheduler.getExecutionGraph();
