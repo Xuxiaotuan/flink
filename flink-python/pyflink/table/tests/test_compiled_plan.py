@@ -70,7 +70,8 @@ class CompiledPlanTest(PyFlinkStreamTableTestCase, PyFlinkTestCase):
 
         self.maxDiff = None
         self.assertEqual(
-            json.loads(_replace_exec_node_id(_replace_flink_version(compiled_plan.as_json_string()))),
+            json.loads(_replace_exec_node_id(
+                _replace_flink_version(compiled_plan.as_json_string()))),
             json.loads(expected)
         )
 
