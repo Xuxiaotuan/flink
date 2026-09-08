@@ -24,6 +24,8 @@ import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.config.ExecutionConfigOptions.SinkUpsertMaterializeStrategy;
 import org.apache.flink.table.planner.utils.TableTestUtil;
 
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -47,7 +49,7 @@ class StatementSetImplTest {
     }
 
     @Test
-    void testGetJsonPlan() {
+    void testGetJsonPlan() throws Exception {
         String srcTableDdl =
                 "CREATE TABLE MyTable (\n"
                         + "  a bigint,\n"
@@ -72,7 +74,11 @@ class StatementSetImplTest {
         stmtSet.addInsertSql("INSERT INTO MySink SELECT * FROM MyTable");
         String jsonPlan = stmtSet.compilePlan().asJsonString();
         String expected = TableTestUtil.readFromResource("/jsonplan/testGetJsonPlan.out");
-        assertThat(TableTestUtil.replaceFlinkVersion(TableTestUtil.replaceExecNodeId(jsonPlan)))
-                .isEqualTo(TableTestUtil.replaceExecNodeId(expected));
+        final ObjectMapper mapper = new ObjectMapper();
+        assertThat(
+                        mapper.readTree(
+                                TableTestUtil.replaceFlinkVersion(
+                                        TableTestUtil.replaceExecNodeId(jsonPlan))))
+                .isEqualTo(mapper.readTree(TableTestUtil.replaceExecNodeId(expected)));
     }
 }

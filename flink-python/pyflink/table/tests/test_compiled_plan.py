@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
+import json
 import os.path
 import re
 import uuid
@@ -69,7 +70,8 @@ class CompiledPlanTest(PyFlinkStreamTableTestCase, PyFlinkTestCase):
 
         self.maxDiff = None
         self.assertEqual(
-            _replace_exec_node_id(_replace_flink_version(compiled_plan.as_json_string())), expected
+            json.loads(_replace_exec_node_id(_replace_flink_version(compiled_plan.as_json_string()))),
+            json.loads(expected)
         )
 
     def test_write_load_compiled_plan(self):
