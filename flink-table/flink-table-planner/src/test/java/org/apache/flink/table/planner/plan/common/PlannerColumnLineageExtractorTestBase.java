@@ -408,6 +408,31 @@ public abstract class PlannerColumnLineageExtractorTestBase extends TableTestBas
     }
 
     @Test
+    void testUnionDistinctIncludesWholeRowDependencies() {
+        final String query = "SELECT a, b FROM FirstTable UNION SELECT a, b FROM SecondTable";
+        final org.apache.calcite.rel.core.Union union =
+                findRel(toRelNode(query), org.apache.calcite.rel.core.Union.class);
+        assertThat(union.all).isFalse();
+        final PlannerSinkColumnLineage lineage = extract("distinct", query, "a", "b");
+        assertInputs(
+                relation(lineage, "a"),
+                "FirstTable.a:DIRECT",
+                "SecondTable.a:DIRECT",
+                "FirstTable.a:INDIRECT",
+                "FirstTable.b:INDIRECT",
+                "SecondTable.a:INDIRECT",
+                "SecondTable.b:INDIRECT");
+        assertInputs(
+                relation(lineage, "b"),
+                "FirstTable.b:DIRECT",
+                "SecondTable.b:DIRECT",
+                "FirstTable.a:INDIRECT",
+                "FirstTable.b:INDIRECT",
+                "SecondTable.a:INDIRECT",
+                "SecondTable.b:INDIRECT");
+    }
+
+    @Test
     void testExtractsSortFieldWithoutLimitOrOffsetDependencies() {
         final PlannerSinkColumnLineage lineage =
                 extract(

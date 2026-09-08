@@ -79,12 +79,48 @@ class ColumnLineagePropagationTest {
             "INSERT INTO LineageSink SELECT `value` + 1 FROM LineageSource";
 
     @Test
+    void testLineageSwitchSkipsDirectAndRestoredColumnMetadata() throws Exception {
+        final TableEnvironmentImpl environment = createEnvironment();
+        final String enabledPlan = environment.compilePlanSql(INSERT_SQL).asJsonString();
+        final String enabledExplanation = environment.explainSql(INSERT_SQL);
+        environment.getConfig().getConfiguration().setString("table.lineage.enabled", "false");
+        assertThat(environment.explainSql(INSERT_SQL)).isEqualTo(enabledExplanation);
+        final ModifyOperation operation =
+                (ModifyOperation) environment.getParser().parse(INSERT_SQL).get(0);
+        assertThat(
+                        LineageGraphUtils.observe(
+                                        environment
+                                                .getPlanner()
+                                                .translate(Collections.singletonList(operation)))
+                                .columnRelations())
+                .isEmpty();
+        assertThat(
+                        LineageGraphUtils.observe(
+                                        CompiledPlanUtils.toTransformations(
+                                                environment,
+                                                environment.loadPlan(
+                                                        PlanReference.fromJsonString(enabledPlan))))
+                                .columnRelations())
+                .isEmpty();
+        final String disabledPlan = environment.compilePlanSql(INSERT_SQL).asJsonString();
+        assertThat(new ObjectMapper().readTree(disabledPlan).findValues("columnLineage"))
+                .allSatisfy(value -> assertThat(value.isNull()).isTrue());
+    }
+
+    @Test
     void testSetMembershipLineageSurvivesDirectAndCompiledTranslation() throws Exception {
         for (boolean batch : new boolean[] {false, true}) {
             for (String operator :
                     new String[] {
-                        "INTERSECT", "INTERSECT ALL", "EXCEPT", "EXCEPT ALL",
-                        "IN", "NOT IN", "EXISTS", "NOT EXISTS"
+                        "UNION",
+                        "INTERSECT",
+                        "INTERSECT ALL",
+                        "EXCEPT",
+                        "EXCEPT ALL",
+                        "IN",
+                        "NOT IN",
+                        "EXISTS",
+                        "NOT EXISTS"
                     }) {
                 final TableEnvironmentImpl environment =
                         (TableEnvironmentImpl)
@@ -144,7 +180,7 @@ class ColumnLineagePropagationTest {
                             identifier("LeftSource").asSerializableString() + ":value:INDIRECT");
                     expected.add(
                             identifier("RightSource").asSerializableString() + ":value:INDIRECT");
-                    if (operator.startsWith("INTERSECT")) {
+                    if (operator.startsWith("INTERSECT") || operator.equals("UNION")) {
                         expected.add(
                                 identifier("RightSource").asSerializableString() + ":value:DIRECT");
                     }

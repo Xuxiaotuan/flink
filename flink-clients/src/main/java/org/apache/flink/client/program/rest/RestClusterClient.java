@@ -374,8 +374,9 @@ public class RestClusterClient<T> implements ClusterClient<T> {
                     .setString(
                             org.apache.flink.core.execution.SubmissionIdentity.CONFIG_KEY,
                             java.util.UUID.randomUUID().toString());
+            java.nio.file.Path executionPlanFile = null;
             try {
-                final java.nio.file.Path executionPlanFile =
+                executionPlanFile =
                         Files.createTempFile(
                                 "flink-executionPlan-" + executionPlan.getJobID(), ".bin");
                 try (ObjectOutputStream objectOut =
@@ -384,6 +385,13 @@ public class RestClusterClient<T> implements ClusterClient<T> {
                 }
                 serializedPlanFuture = CompletableFuture.completedFuture(executionPlanFile);
             } catch (IOException | RuntimeException e) {
+                if (executionPlanFile != null) {
+                    try {
+                        Files.deleteIfExists(executionPlanFile);
+                    } catch (IOException | RuntimeException cleanupFailure) {
+                        e.addSuppressed(cleanupFailure);
+                    }
+                }
                 serializedPlanFuture =
                         FutureUtils.completedExceptionally(
                                 new FlinkException("Failed to serialize ExecutionPlan.", e));

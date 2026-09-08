@@ -51,9 +51,33 @@ import java.util.Set;
 /** Extracts logical column lineage and binds it to processed sink execution nodes. */
 @Internal
 public final class PlannerColumnLineagePlanBinder {
+    public static final org.apache.flink.configuration.ConfigOption<Boolean> ENABLED =
+            org.apache.flink.configuration.ConfigOptions.key("table.lineage.enabled")
+                    .booleanType()
+                    .defaultValue(true)
+                    .withDescription(
+                            "Observe native logical SQL lineage without vetoing execution.");
+
     private static final org.slf4j.Logger LOG =
             org.slf4j.LoggerFactory.getLogger(PlannerColumnLineagePlanBinder.class);
     private String failureReason;
+    private boolean disabled;
+
+    public static PlannerColumnLineagePlanBinder observe(
+            List<RelNode> roots,
+            List<?> operations,
+            org.apache.flink.configuration.ReadableConfig config) {
+        final boolean enabled = config.get(ENABLED);
+        LOG.info("Native SQL lineage observation enabled: {}", enabled);
+        if (enabled) {
+            return observe(roots, operations);
+        }
+        final PlannerColumnLineagePlanBinder observer =
+                new PlannerColumnLineagePlanBinder(
+                        Collections.emptyList(), Collections.emptyList());
+        observer.disabled = true;
+        return observer;
+    }
 
     /** Creates a best-effort observer; extraction failures cannot veto optimization. */
     public static PlannerColumnLineagePlanBinder observe(List<RelNode> roots, List<?> operations) {
@@ -134,7 +158,7 @@ public final class PlannerColumnLineagePlanBinder {
     }
 
     private void observe(Runnable action) {
-        if (failureReason != null) {
+        if (disabled || failureReason != null) {
             return;
         }
         try {
@@ -256,7 +280,7 @@ public final class PlannerColumnLineagePlanBinder {
 
     /** Called with the exact group selected by the existing SinkReuser. */
     public void reuseSinks(List<Sink> sinks) {
-        if (failureReason != null) {
+        if (disabled || failureReason != null) {
             return;
         }
         try {

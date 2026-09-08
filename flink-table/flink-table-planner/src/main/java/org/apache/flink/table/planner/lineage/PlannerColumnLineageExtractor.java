@@ -433,6 +433,14 @@ public final class PlannerColumnLineageExtractor {
             sources.addAll(input.sources);
         }
         rowTransformations.add(PlannerColumnLineageTransformation.UNION);
+        if (!union.all) {
+            // DISTINCT compares the entire row, not only the projected output column.
+            for (NodeLineage input : inputs) {
+                for (FieldLineage field : input.fields) {
+                    addIndirectInputs(rowDependencies, field.inputs);
+                }
+            }
+        }
 
         for (int i = 0; i < fieldCount; i++) {
             final FieldLineage merged = new FieldLineage();

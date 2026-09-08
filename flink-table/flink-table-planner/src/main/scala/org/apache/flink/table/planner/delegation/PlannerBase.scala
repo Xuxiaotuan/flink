@@ -181,7 +181,8 @@ abstract class PlannerBase(
     }
 
     val relNodes = modifyOperations.asScala.map(translateToRel)
-    val columnLineage = PlannerColumnLineagePlanBinder.observe(relNodes.asJava, modifyOperations)
+    val columnLineage =
+      PlannerColumnLineagePlanBinder.observe(relNodes.asJava, modifyOperations, tableConfig)
     val optimizedRelNodes = optimize(relNodes, columnLineage)
     val execGraph = translateToExecNodeGraph(optimizedRelNodes, isCompiled = false)
     columnLineage.bind(execGraph)
@@ -220,7 +221,8 @@ abstract class PlannerBase(
   override def compilePlan(modifyOperations: util.List[ModifyOperation]): InternalPlan = {
     beforeTranslation()
     val relNodes = modifyOperations.asScala.map(translateToRel)
-    val columnLineage = PlannerColumnLineagePlanBinder.observe(relNodes.asJava, modifyOperations)
+    val columnLineage =
+      PlannerColumnLineagePlanBinder.observe(relNodes.asJava, modifyOperations, tableConfig)
     val optimizedRelNodes = optimize(relNodes, columnLineage)
     val execGraph = translateToExecNodeGraph(optimizedRelNodes, isCompiled = true)
     columnLineage.bind(execGraph)
@@ -649,7 +651,7 @@ abstract class PlannerBase(
       case o => throw new TableException(s"Unsupported operation: ${o.getClass.getCanonicalName}")
     }
     val columnLineage =
-      PlannerColumnLineagePlanBinder.observe(sinkRelNodes.asJava, operations)
+      PlannerColumnLineagePlanBinder.observe(sinkRelNodes.asJava, operations, tableConfig)
     val optimizedRelNodes = optimize(sinkRelNodes, columnLineage)
     val execGraph = translateToExecNodeGraph(optimizedRelNodes, isCompiled = false)
     columnLineage.bind(execGraph)

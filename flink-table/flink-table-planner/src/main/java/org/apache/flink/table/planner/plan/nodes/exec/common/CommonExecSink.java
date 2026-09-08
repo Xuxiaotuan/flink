@@ -178,7 +178,11 @@ public abstract class CommonExecSink extends ExecNodeBase<Object>
                         new SinkRuntimeProviderContext(
                                 isBounded, tableSinkSpec.getTargetColumns()));
         final RowType physicalRowType = getPhysicalRowType(schema);
-        final boolean requiresColumnLineage = requiresColumnLineage(tableSink);
+        final boolean lineageEnabled =
+                config.get(
+                        org.apache.flink.table.planner.lineage.PlannerColumnLineagePlanBinder
+                                .ENABLED);
+        final boolean requiresColumnLineage = lineageEnabled && requiresColumnLineage(tableSink);
         final int[] primaryKeys = getPrimaryKeyIndices(physicalRowType, schema);
         final int sinkParallelism = deriveSinkParallelism(inputTransform, runtimeProvider);
         sinkParallelismConfigured = isParallelismConfigured(runtimeProvider);
@@ -272,6 +276,9 @@ public abstract class CommonExecSink extends ExecNodeBase<Object>
                 final TransformationWithLineage<Object> lineageTransformation =
                         (TransformationWithLineage<Object>) transformation;
                 lineageTransformation.setLineageVertex(sinkLineageVertex);
+                if (!lineageEnabled) {
+                    return transformation;
+                }
                 try {
                     lineageTransformation.setTableLineage(createTableLineage(inputTransform));
                 } catch (RuntimeException error) {

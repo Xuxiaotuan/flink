@@ -351,6 +351,13 @@ class RestClusterClientTest {
                         createRestClusterClient(endpoint.getServerAddress().getPort())) {
             CompletableFuture<JobID> submission = client.submitJob(brokenGraph);
             assertThatThrownBy(submission::get).hasRootCauseInstanceOf(IllegalStateException.class);
+            try (Stream<Path> files = Files.list(getTempDir())) {
+                assertThat(files)
+                        .noneMatch(
+                                path ->
+                                        path.toString()
+                                                .contains(brokenGraph.getJobID().toString()));
+            }
         }
     }
 
