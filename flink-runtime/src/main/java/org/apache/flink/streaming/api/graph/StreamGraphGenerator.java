@@ -42,6 +42,7 @@ import org.apache.flink.runtime.jobgraph.JobType;
 import org.apache.flink.runtime.jobgraph.SavepointRestoreSettings;
 import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
 import org.apache.flink.streaming.api.environment.CheckpointConfig;
+import org.apache.flink.streaming.api.lineage.LineageGraphTransport;
 import org.apache.flink.streaming.api.lineage.LineageGraphUtils;
 import org.apache.flink.streaming.api.operators.sorted.state.BatchExecutionCheckpointStorage;
 import org.apache.flink.streaming.api.operators.sorted.state.BatchExecutionInternalTimeServiceManager;
@@ -302,10 +303,14 @@ public class StreamGraphGenerator {
                                     .LINEAGE_COLUMN_STATUSES,
                             org.apache.flink.util.jackson.JacksonMapperFactory.createObjectMapper()
                                     .writeValueAsString(observation.getColumnStatuses()));
+            streamGraph
+                    .getJobConfiguration()
+                    .setString(
+                            LineageGraphTransport.CONFIG_KEY,
+                            LineageGraphTransport.serialize(observation));
         } catch (org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException
                 | RuntimeException failure) {
-            LOG.warn(
-                    "Could not transfer per-dataset lineage status; execution continues.", failure);
+            LOG.warn("Could not transfer lineage metadata; execution continues.", failure);
         }
 
         for (StreamNode node : streamGraph.getStreamNodes()) {

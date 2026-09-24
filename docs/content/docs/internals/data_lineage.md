@@ -108,14 +108,25 @@ The focused Flink 2.4 verification command is:
 JAVA_HOME=/path/to/jdk-17 \
   ./mvnw -s tools/ci/google-mirror-settings.xml \
   -pl flink-table/flink-table-planner \
+  -Dflink.markBundledAsOptional=false \
   -DskipITs -Dcheckstyle.skip -Drat.skip=true \
   -Dtest=ColumnLineagePropagationTest,ColumnLineageSubmissionGateITCase test
 ```
 
-The current branch passed 50 tests (41 propagation and 9 submission-gate
+The current branch passed 51 tests (41 propagation and 10 submission-gate
 tests). This verifies Planner extraction, compiled-plan restore, StatementSet
-fan-out, final `JobCreatedEvent` visibility, and execution/lineage failure
-isolation. It does not imply that every Flink SQL operator or every external
-listener delivery path is supported.
+fan-out, final `JobCreatedEvent` visibility, execution-status lineage metadata,
+and execution/lineage failure isolation. The submission-gate suite runs through
+the MiniCluster Dispatcher: the planner writes a versioned runtime-neutral
+lineage payload into the submitted `JobGraph`, the Dispatcher decodes it, and
+the existing `DefaultJobCreatedEvent` is delivered exactly once with the full
+`columnRelations()` graph. Client-side duplicate notifications are disabled so
+the Dispatcher is the single owner of job-created lineage events.
+
+This proves the in-process Dispatcher boundary. A separately deployed external
+Session Cluster has not been exercised in this local run, and connector-specific
+OpenLineage visitors that require the planner's `CatalogBaseTable` object still
+need a dedicated transport representation. It also does not imply that every
+Flink SQL operator or every external listener delivery path is supported.
 
 {{< top >}}

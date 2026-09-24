@@ -19,6 +19,8 @@
 package org.apache.flink.table.planner.lineage;
 
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.core.execution.DefaultJobExecutionStatusEvent;
+import org.apache.flink.core.execution.JobExecutionStatusEvent;
 import org.apache.flink.core.execution.JobStatusChangedEvent;
 import org.apache.flink.core.execution.JobStatusChangedListener;
 import org.apache.flink.core.execution.JobStatusChangedListenerFactory;
@@ -139,6 +141,28 @@ class ColumnLineageSubmissionGateITCase {
                 .filter(JobCreatedEvent.class::isInstance)
                 .map(JobCreatedEvent.class::cast)
                 .forEach(event -> assertThat(event.lineageGraph()).isNotNull());
+    }
+
+    @Test
+    void submittedPlanTransfersLineageStatusToExecutionEvents() throws Exception {
+        createEnvironment().executeSql(INSERT_SQL).await(30, TimeUnit.SECONDS);
+
+        final List<DefaultJobExecutionStatusEvent> statusEvents =
+                STATUS_CHANGED_EVENTS.stream()
+                        .filter(JobExecutionStatusEvent.class::isInstance)
+                        .map(DefaultJobExecutionStatusEvent.class::cast)
+                        .toList();
+
+        assertThat(statusEvents).isNotEmpty();
+        assertThat(statusEvents)
+                .allSatisfy(
+                        event ->
+                                assertThat(
+                                                event.getLineageStatus()
+                                                        .get(
+                                                                DefaultJobExecutionStatusEvent
+                                                                        .LINEAGE_COLUMN_STATUS))
+                                        .isEqualTo("COMPLETE"));
     }
 
     @Test

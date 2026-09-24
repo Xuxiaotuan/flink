@@ -26,15 +26,12 @@ import org.apache.flink.client.deployment.executors.PipelineExecutorUtils;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.PipelineOptionsInternal;
 import org.apache.flink.core.execution.JobClient;
-import org.apache.flink.core.execution.JobStatusChangedListener;
-import org.apache.flink.core.execution.JobStatusChangedListenerUtils;
 import org.apache.flink.core.execution.PipelineExecutor;
 import org.apache.flink.runtime.blob.BlobClient;
 import org.apache.flink.runtime.client.ClientUtils;
 import org.apache.flink.runtime.dispatcher.DispatcherGateway;
 import org.apache.flink.runtime.messages.Acknowledge;
 import org.apache.flink.streaming.api.graph.StreamGraph;
-import org.apache.flink.util.concurrent.ExecutorThreadFactory;
 import org.apache.flink.util.function.FunctionUtils;
 
 import org.slf4j.Logger;
@@ -44,12 +41,9 @@ import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
@@ -64,10 +58,6 @@ public class EmbeddedExecutor implements PipelineExecutor {
 
     private static final Logger LOG = LoggerFactory.getLogger(EmbeddedExecutor.class);
 
-    private final ExecutorService executorService =
-            Executors.newFixedThreadPool(
-                    1, new ExecutorThreadFactory("Flink-EmbeddedClusterExecutor-IO"));
-
     public static final String NAME = "embedded";
 
     private final Collection<JobID> applicationJobIds;
@@ -79,8 +69,6 @@ public class EmbeddedExecutor implements PipelineExecutor {
     private final DispatcherGateway dispatcherGateway;
 
     private final EmbeddedJobClientCreator jobClientCreator;
-
-    private final List<JobStatusChangedListener> jobStatusChangedListeners;
 
     /**
      * Creates a {@link EmbeddedExecutor}.
@@ -135,11 +123,6 @@ public class EmbeddedExecutor implements PipelineExecutor {
         this.terminalJobIds = checkNotNull(terminalJobIds);
         this.dispatcherGateway = checkNotNull(dispatcherGateway);
         this.jobClientCreator = checkNotNull(jobClientCreator);
-        this.jobStatusChangedListeners =
-                JobStatusChangedListenerUtils.createJobStatusChangedListeners(
-                        Thread.currentThread().getContextClassLoader(),
-                        configuration,
-                        executorService);
     }
 
     @Override
@@ -212,7 +195,6 @@ public class EmbeddedExecutor implements PipelineExecutor {
         }
 
         final CompletableFuture<JobID> jobSubmissionFuture;
-        final String submissionId;
         synchronized (streamGraph) {
             jobSubmissionFuture =
                     submitJob(
@@ -221,12 +203,6 @@ public class EmbeddedExecutor implements PipelineExecutor {
                             streamGraph,
                             timeout,
                             userCodeClassloader);
-            submissionId =
-                    streamGraph
-                            .getJobConfiguration()
-                            .getString(
-                                    org.apache.flink.core.execution.SubmissionIdentity.CONFIG_KEY,
-                                    null);
         }
 
         return jobSubmissionFuture
@@ -252,13 +228,7 @@ public class EmbeddedExecutor implements PipelineExecutor {
                         jobID -> jobClientCreator.getJobClient(actualJobId, userCodeClassloader))
                 .whenCompleteAsync(
                         (jobClient, throwable) -> {
-                            if (throwable == null) {
-                                PipelineExecutorUtils.notifyJobStatusListeners(
-                                        pipeline,
-                                        streamGraph,
-                                        jobStatusChangedListeners,
-                                        submissionId);
-                            } else {
+                            if (throwable != null) {
                                 LOG.error(
                                         "Failed to submit job graph to application cluster",
                                         throwable);

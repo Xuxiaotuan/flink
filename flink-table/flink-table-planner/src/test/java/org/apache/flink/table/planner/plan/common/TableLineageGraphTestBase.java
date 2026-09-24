@@ -24,6 +24,7 @@ import org.apache.flink.streaming.api.environment.CheckpointConfig;
 import org.apache.flink.streaming.api.graph.StreamGraph;
 import org.apache.flink.streaming.api.graph.StreamGraphGenerator;
 import org.apache.flink.streaming.api.lineage.LineageGraph;
+import org.apache.flink.streaming.api.lineage.LineageGraphTransport;
 import org.apache.flink.table.planner.utils.TableTestBase;
 import org.apache.flink.table.planner.utils.TableTestUtil;
 
@@ -39,6 +40,7 @@ import java.nio.file.Paths;
 import java.util.List;
 
 import static net.javacrumbs.jsonunit.assertj.JsonAssertions.assertThatJson;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /** Lineage Graph tests for varies queries. */
 public abstract class TableLineageGraphTestBase extends TableTestBase {
@@ -191,6 +193,8 @@ public abstract class TableLineageGraphTestBase extends TableTestBase {
                         transformations, new ExecutionConfig(), new CheckpointConfig());
         StreamGraph graph = streamGraphGenerator.generate();
         LineageGraph lineageGraph = graph.getLineageGraph();
+        assertThat(graph.getJobConfiguration().getString(LineageGraphTransport.CONFIG_KEY, ""))
+                .isNotBlank();
         return lineageGraph;
     }
 

@@ -20,6 +20,7 @@ package org.apache.flink.runtime.executiongraph;
 
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.ExecutionOptions;
 import org.apache.flink.configuration.IllegalConfigurationException;
 import org.apache.flink.configuration.JobManagerOptions;
 import org.apache.flink.core.execution.JobStatusChangedListener;
@@ -52,6 +53,10 @@ import org.apache.flink.runtime.state.CheckpointStorage;
 import org.apache.flink.runtime.state.CheckpointStorageLoader;
 import org.apache.flink.runtime.state.StateBackend;
 import org.apache.flink.runtime.state.StateBackendLoader;
+import org.apache.flink.streaming.api.lineage.LineageGraph;
+import org.apache.flink.streaming.api.lineage.LineageGraphObservation;
+import org.apache.flink.streaming.api.lineage.LineageGraphTransport;
+import org.apache.flink.streaming.api.lineage.LineageGraphTransportException;
 import org.apache.flink.util.DynamicCodeLoadingException;
 import org.apache.flink.util.SerializedValue;
 
@@ -197,6 +202,55 @@ public class DefaultExecutionGraphBuilder {
                     jobId);
         }
         executionGraph.attachJobGraph(sortedTopology, jobManagerJobMetricGroup);
+
+        final String lineagePayload =
+                jobGraph.getJobConfiguration().getString(LineageGraphTransport.CONFIG_KEY, null);
+        try {
+            final LineageGraph lineageGraph =
+                    lineagePayload == null
+                            ? new LineageGraphObservation(
+                                    org.apache.flink.streaming.api.lineage.DefaultLineageGraph
+                                            .builder()
+                                            .build(),
+                                    "UNAVAILABLE",
+                                    "UNAVAILABLE",
+                                    Collections.singletonList(
+                                            "No lineage graph payload was transferred to the Dispatcher"))
+                            : LineageGraphTransport.deserialize(lineagePayload);
+            DispatcherLineageEventUtils.notifyJobCreated(
+                    jobStatusChangedListeners,
+                    jobId,
+                    jobName,
+                    lineageGraph,
+                    jobGraph.getJobConfiguration().get(ExecutionOptions.RUNTIME_MODE),
+                    jobGraph.getJobConfiguration()
+                            .getString(
+                                    org.apache.flink.core.execution.SubmissionIdentity.CONFIG_KEY,
+                                    null),
+                    classLoader);
+        } catch (LineageGraphTransportException lineageFailure) {
+            log.warn(
+                    "Could not restore lineage graph for Dispatcher job {}; execution continues.",
+                    jobId,
+                    lineageFailure);
+            DispatcherLineageEventUtils.notifyJobCreated(
+                    jobStatusChangedListeners,
+                    jobId,
+                    jobName,
+                    new LineageGraphObservation(
+                            org.apache.flink.streaming.api.lineage.DefaultLineageGraph.builder()
+                                    .build(),
+                            "UNAVAILABLE",
+                            "UNAVAILABLE",
+                            Collections.singletonList(
+                                    "Lineage graph payload could not be restored")),
+                    jobGraph.getJobConfiguration().get(ExecutionOptions.RUNTIME_MODE),
+                    jobGraph.getJobConfiguration()
+                            .getString(
+                                    org.apache.flink.core.execution.SubmissionIdentity.CONFIG_KEY,
+                                    null),
+                    classLoader);
+        }
 
         if (log.isDebugEnabled()) {
             log.debug(
