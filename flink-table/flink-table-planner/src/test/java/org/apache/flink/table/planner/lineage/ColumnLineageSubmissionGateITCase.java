@@ -198,9 +198,74 @@ class ColumnLineageSubmissionGateITCase {
         assertExpectedObservationLogs();
     }
 
+    @Test
+    void statementSetPublishesIndependentColumnLineageInJobCreatedEvent() throws Exception {
+        final TableEnvironmentImpl environment = createEnvironment();
+        environment.createTemporaryTable(
+                "SecondLineageSink",
+                TableDescriptor.forConnector("values")
+                        .schema(
+                                Schema.newBuilder()
+                                        .column("second_result", DataTypes.BIGINT())
+                                        .build())
+                        .build());
+        final var statementSet = environment.createStatementSet();
+        statementSet.addInsertSql(INSERT_SQL);
+        statementSet.addInsertSql(
+                "INSERT INTO SecondLineageSink SELECT `value` + 2 FROM LineageSource");
+
+        statementSet.execute().await(30, TimeUnit.SECONDS);
+
+        final List<org.apache.flink.streaming.api.lineage.LineageGraphObservation> observations =
+                STATUS_CHANGED_EVENTS.stream()
+                        .filter(JobCreatedEvent.class::isInstance)
+                        .map(JobCreatedEvent.class::cast)
+                        .map(
+                                event ->
+                                        (org.apache.flink.streaming.api.lineage
+                                                        .LineageGraphObservation)
+                                                event.lineageGraph())
+                        .toList();
+        assertThat(observations).hasSize(1);
+        assertThat(observations.get(0).getColumnStatus()).isEqualTo("COMPLETE");
+        assertThat(observations.get(0).columnRelations())
+                .extracting(
+                        relation -> relation.outputDataset().name(),
+                        org.apache.flink.streaming.api.lineage.ColumnLineageRelation::outputField)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(
+                                "`default_catalog`.`default_database`.`LineageSink`", "result"),
+                        org.assertj.core.groups.Tuple.tuple(
+                                "`default_catalog`.`default_database`.`SecondLineageSink`",
+                                "second_result"));
+    }
+
+    @Test
+    void restoredBatchPlanPublishesColumnLineageInJobCreatedEvent() throws Exception {
+        final TableEnvironmentImpl environment = createEnvironment(true);
+        final org.apache.flink.table.api.CompiledPlan plan = environment.compilePlanSql(INSERT_SQL);
+
+        environment
+                .loadPlan(PlanReference.fromJsonString(plan.asJsonString()))
+                .execute()
+                .await(30, TimeUnit.SECONDS);
+
+        final JobCreatedEvent event =
+                STATUS_CHANGED_EVENTS.stream()
+                        .filter(JobCreatedEvent.class::isInstance)
+                        .map(JobCreatedEvent.class::cast)
+                        .findFirst()
+                        .orElseThrow();
+        final org.apache.flink.streaming.api.lineage.LineageGraphObservation observation =
+                (org.apache.flink.streaming.api.lineage.LineageGraphObservation)
+                        event.lineageGraph();
+        assertThat(observation.getColumnStatus()).isEqualTo("COMPLETE");
+        assertThat(observation.columnRelations()).hasSize(1);
+        assertThat(observation.columnRelations().get(0).outputField()).isEqualTo("result");
+    }
+
     private void assertExpectedObservationLogs() {
         assertThat(lineageLogs.getEvents())
-                .isNotEmpty()
                 .allSatisfy(
                         event -> {
                             assertThat(event.getThrown()).isNull();

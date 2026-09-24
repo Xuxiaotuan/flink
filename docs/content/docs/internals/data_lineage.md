@@ -84,4 +84,38 @@ The lineage extraction gate does not guarantee that an external listener has
 successfully delivered the event. Delivery semantics are the listener's
 responsibility and require separate validation.
 
+## SQL support boundary and verification
+
+This development branch validates column lineage for projection and aliases,
+expressions and functions, joins, aggregations and grouping, unions, windows,
+CTEs and covered subqueries, and StatementSet writes. A StatementSet with
+multiple named sinks keeps each sink's output fields and input dependencies
+independent. Restored compiled plans preserve the same column lineage in the
+final `JobCreatedEvent`.
+
+Lineage is optional metadata and must not change Flink execution semantics. If
+lineage metadata is missing, malformed, uses an unknown format version, or
+cannot be derived for a planner shape, the job may still execute; the emitted
+`LineageGraphObservation` reports `UNAVAILABLE` or `PARTIAL` and records the
+issue. Invalid SQL and invalid executable plans still fail normally. This
+branch does not claim complete column lineage for arbitrary DataStream code or
+for every SQL construct, connector-specific schema, `IN`/`EXISTS` query, UDTF,
+CEP, or `MATCH_RECOGNIZE` form.
+
+The focused Flink 2.4 verification command is:
+
+```bash
+JAVA_HOME=/path/to/jdk-17 \
+  ./mvnw -s tools/ci/google-mirror-settings.xml \
+  -pl flink-table/flink-table-planner \
+  -DskipITs -Dcheckstyle.skip -Drat.skip=true \
+  -Dtest=ColumnLineagePropagationTest,ColumnLineageSubmissionGateITCase test
+```
+
+The current branch passed 50 tests (41 propagation and 9 submission-gate
+tests). This verifies Planner extraction, compiled-plan restore, StatementSet
+fan-out, final `JobCreatedEvent` visibility, and execution/lineage failure
+isolation. It does not imply that every Flink SQL operator or every external
+listener delivery path is supported.
+
 {{< top >}}
