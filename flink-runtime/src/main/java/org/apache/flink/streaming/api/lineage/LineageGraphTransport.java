@@ -28,20 +28,23 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMap
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.node.ArrayNode;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.node.ObjectNode;
 
-import javax.annotation.Nullable;
-
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /** Versioned, runtime-neutral transport for a lineage graph. */
 @Internal
 public final class LineageGraphTransport {
     public static final int FORMAT_VERSION = 1;
     public static final String CONFIG_KEY = "internal.lineage.graph";
+
+    /** Dataset facet containing connector-safe table metadata for remote consumers. */
+    public static final String TABLE_METADATA_FACET = "internal.lineage.table-metadata";
 
     private static final ObjectMapper MAPPER = JacksonMapperFactory.createObjectMapper();
 
@@ -199,7 +202,17 @@ public final class LineageGraphTransport {
             final Map<String, LineageDatasetFacet> facets = new LinkedHashMap<>();
             for (JsonNode facet : dataset.path("facets")) {
                 final String name = requiredText(facet, "name");
-                facets.put(name, new TransportFacet(name, facet.get("payload")));
+                facets.put(
+                        name,
+                        new TransportFacet(
+                                name,
+                                facet.has("payload") ? facet.get("payload").toString() : "null"));
+            }
+            if (dataset.has("tableMetadata")) {
+                facets.put(
+                        TABLE_METADATA_FACET,
+                        new TransportFacet(
+                                TABLE_METADATA_FACET, dataset.get("tableMetadata").toString()));
             }
             result.add(
                     new DefaultLineageDataset(
@@ -359,11 +372,11 @@ public final class LineageGraphTransport {
         }
     }
 
-    private static final class TransportFacet implements LineageDatasetFacet {
+    private static final class TransportFacet implements LineageDatasetFacetPayload {
         private final String name;
-        @Nullable private final JsonNode payload;
+        private final String payload;
 
-        private TransportFacet(String name, @Nullable JsonNode payload) {
+        private TransportFacet(String name, String payload) {
             this.name = name;
             this.payload = payload;
         }
@@ -373,8 +386,8 @@ public final class LineageGraphTransport {
             return name;
         }
 
-        @Nullable
-        public JsonNode payload() {
+        @Override
+        public String payload() {
             return payload;
         }
     }
@@ -448,6 +461,7 @@ public final class LineageGraphTransport {
                 final ObjectNode value = result.addObject();
                 value.put("name", dataset.name());
                 value.put("namespace", dataset.namespace());
+                tableMetadata(dataset).ifPresent(metadata -> value.set("tableMetadata", metadata));
                 final ArrayNode facets = value.putArray("facets");
                 dataset.facets()
                         .forEach(
@@ -456,13 +470,59 @@ public final class LineageGraphTransport {
                                     facetNode.put("name", name);
                                     facetNode.put("className", facet.getClass().getName());
                                     try {
-                                        facetNode.set("payload", mapper.valueToTree(facet));
+                                        if (facet instanceof LineageDatasetFacetPayload) {
+                                            facetNode.set(
+                                                    "payload",
+                                                    mapper.readTree(
+                                                            ((LineageDatasetFacetPayload) facet)
+                                                                    .payload()));
+                                        } else {
+                                            facetNode.set("payload", mapper.valueToTree(facet));
+                                        }
                                     } catch (IllegalArgumentException ignored) {
+                                        facetNode.putNull("payload");
+                                    } catch (JsonProcessingException ignored) {
                                         facetNode.putNull("payload");
                                     }
                                 });
             }
             return result;
+        }
+
+        private static Optional<ObjectNode> tableMetadata(LineageDataset dataset) {
+            try {
+                final Method tableMethod = dataset.getClass().getMethod("table");
+                final Object table = tableMethod.invoke(dataset);
+                if (table == null) {
+                    return Optional.empty();
+                }
+                final Object options = table.getClass().getMethod("getOptions").invoke(table);
+                if (!(options instanceof Map)) {
+                    return Optional.empty();
+                }
+                final ObjectNode metadata = MAPPER.createObjectNode();
+                metadata.set("options", MAPPER.valueToTree(options));
+                final Object kind = table.getClass().getMethod("getTableKind").invoke(table);
+                if (kind != null) {
+                    metadata.put("tableKind", kind.toString());
+                }
+                final Object comment = table.getClass().getMethod("getComment").invoke(table);
+                if (comment != null) {
+                    metadata.put("comment", comment.toString());
+                }
+                try {
+                    final Object fields =
+                            dataset.getClass().getMethod("fieldNames").invoke(dataset);
+                    if (fields instanceof List) {
+                        metadata.set("fieldNames", MAPPER.valueToTree(fields));
+                    }
+                } catch (ReflectiveOperationException ignored) {
+                    // Field names are optional metadata; connector options remain authoritative.
+                }
+                return Optional.of(metadata);
+            } catch (ReflectiveOperationException | IllegalArgumentException ignored) {
+                return Optional.empty();
+            }
         }
     }
 

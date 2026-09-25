@@ -113,6 +113,41 @@ class LineageGraphTransportTest {
                 .isInstanceOf(LineageGraphTransportException.class);
     }
 
+    @Test
+    void tableMetadataIsTransportedForConnectorConsumers() throws Exception {
+        final LineageDataset tableDataset =
+                new TestingTableDataset(
+                        "orders",
+                        "catalog://warehouse",
+                        Map.of(
+                                "connector", "kafka",
+                                "topic", "orders",
+                                "properties.bootstrap.servers", "broker:9092"));
+        final LineageGraph graph =
+                DefaultLineageGraph.builder()
+                        .addSourceVertexes(
+                                new TestingSourceVertex(List.of(tableDataset), Boundedness.BOUNDED))
+                        .build();
+
+        final LineageDataset restored =
+                LineageGraphTransport.deserialize(LineageGraphTransport.serialize(graph))
+                        .sources()
+                        .get(0)
+                        .datasets()
+                        .get(0);
+
+        assertThat(restored.facets()).containsKey(LineageGraphTransport.TABLE_METADATA_FACET);
+        assertThat(restored.facets().get(LineageGraphTransport.TABLE_METADATA_FACET))
+                .isInstanceOf(LineageDatasetFacetPayload.class);
+        assertThat(
+                        ((LineageDatasetFacetPayload)
+                                        restored.facets()
+                                                .get(LineageGraphTransport.TABLE_METADATA_FACET))
+                                .payload())
+                .contains("\"connector\":\"kafka\"")
+                .contains("\"fieldNames\"");
+    }
+
     private static final class TestingFacet implements LineageDatasetFacet {
         private final String name;
 
@@ -123,6 +158,61 @@ class LineageGraphTransportTest {
         @Override
         public String name() {
             return name;
+        }
+    }
+
+    public static final class TestingTableDataset implements LineageDataset {
+        private final String name;
+        private final String namespace;
+        private final TestingTable table;
+
+        private TestingTableDataset(String name, String namespace, Map<String, String> options) {
+            this.name = name;
+            this.namespace = namespace;
+            this.table = new TestingTable(options);
+        }
+
+        @Override
+        public String name() {
+            return name;
+        }
+
+        @Override
+        public String namespace() {
+            return namespace;
+        }
+
+        @Override
+        public Map<String, LineageDatasetFacet> facets() {
+            return Map.of();
+        }
+
+        public TestingTable table() {
+            return table;
+        }
+
+        public List<String> fieldNames() {
+            return List.of("order_id", "amount");
+        }
+    }
+
+    public static final class TestingTable {
+        private final Map<String, String> options;
+
+        private TestingTable(Map<String, String> options) {
+            this.options = options;
+        }
+
+        public Map<String, String> getOptions() {
+            return options;
+        }
+
+        public String getTableKind() {
+            return "TABLE";
+        }
+
+        public String getComment() {
+            return "orders table";
         }
     }
 

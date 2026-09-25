@@ -123,10 +123,22 @@ the existing `DefaultJobCreatedEvent` is delivered exactly once with the full
 `columnRelations()` graph. Client-side duplicate notifications are disabled so
 the Dispatcher is the single owner of job-created lineage events.
 
-This proves the in-process Dispatcher boundary. A separately deployed external
-Session Cluster has not been exercised in this local run, and connector-specific
-OpenLineage visitors that require the planner's `CatalogBaseTable` object still
-need a dedicated transport representation. It also does not imply that every
-Flink SQL operator or every external listener delivery path is supported.
+The same transport has also been exercised through a separately deployed Flink
+2.4 Session Cluster. A network SQL submission reached `FINISHED`, wrote the
+expected output, and delivered START/RUNNING/COMPLETE OpenLineage events to an
+HTTP collector. The COMPLETE event contained table lineage and a
+`columnLineage` facet for the output fields. The transport additionally carries
+connector options, table kind, comment, and field names; the OpenLineage Flink
+2 adapter reconstructs a lightweight `CatalogBaseTable` from that payload when
+the planner-only table object is not visible to the listener, so connector
+visitors can keep using their normal option-based identification logic.
+
+The external acceptance used JDK 17 in the runtime image and the local
+OpenLineage all-in-one jar. The normal Gradle dependency-resolution path could
+not be used in this environment because Maven Central returned HTTP 403 for
+Flink shaded artifacts; the changed adapter was compiled directly against the
+local Flink 2.4 runtime and then exercised by the deployed listener. This does
+not imply that every Flink SQL operator or every external listener delivery
+path is supported.
 
 {{< top >}}
